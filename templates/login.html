@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}BLUE | Login{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<section class="auth-card auth-blue-panel">
+  <div class="auth-logo">BLUE</div>
+  <form method="post" class="auth-form">
+    <label>
+      <span>Username</span>
+      <input type="text" name="username" required>
+    </label>
+    <label>
+      <span>Password</span>
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="pixel-btn primary">Log In</button>
+    <a href="{{ url_for('register') }}" class="pixel-btn secondary link-btn">Create Account</a>
+    <a href="{{ url_for('admin_login') }}" class="pixel-btn secondary link-btn">Admin Login</a>
+  </form>
+</section>
+{% endblock %}

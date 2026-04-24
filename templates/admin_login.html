@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+{% block title %}BLUE | Admin Login{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<section class="auth-card auth-blue-panel">
+  <div class="auth-logo">BLUE ADMIN</div>
+  <form method="post" class="auth-form">
+    <label>
+      <span>Admin Username</span>
+      <input type="text" name="username" required>
+    </label>
+    <label>
+      <span>Admin Password</span>
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="pixel-btn primary">Admin Log In</button>
+    <a href="{{ url_for('login') }}" class="pixel-btn secondary link-btn">Back to User Login</a>
+  </form>
+</section>
+{% endblock %}

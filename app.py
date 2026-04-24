@@ -1,0 +1,1014 @@
+import csv
+import io
+import os
+from datetime import datetime
+from functools import wraps
+from typing import Any
+
+from dotenv import load_dotenv
+from flask import Flask, Response, flash, g, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from db import get_conn, get_cursor
+
+load_dotenv()
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
+
+
+# --------------------------
+# Helpers
+# --------------------------
+
+def ensure_password_column_size():
+    """
+    Ensure User_tbl.Password can store hashed passwords.
+    Older schema versions use VARCHAR(50), which truncates hashes.
+    """
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                """
+                SELECT CHARACTER_MAXIMUM_LENGTH AS max_len
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'User_tbl'
+                  AND COLUMN_NAME = 'Password'
+                """
+            )
+            row = cur.fetchone()
+            if row and row.get("max_len") and int(row["max_len"]) < 255:
+                cur.execute("ALTER TABLE User_tbl MODIFY Password VARCHAR(255) NOT NULL")
+            cur.close()
+    except Exception as exc:
+        # App can still run if DB user lacks ALTER privileges.
+        app.logger.warning("Could not verify/upgrade User_tbl.Password column: %s", exc)
+
+
+ensure_password_column_size()
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if session.get("user_id") is None:
+            flash("Please log in first.", "warning")
+            return redirect(url_for("login"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("is_admin"):
+            flash("Please log in as admin first.", "warning")
+            return redirect(url_for("admin_login"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@app.before_request
+def load_logged_in_user():
+    g.user = {
+        "user_id": session.get("user_id"),
+        "company_id": session.get("company_id"),
+        "username": session.get("username"),
+        "company_name": session.get("company_name"),
+    }
+
+
+def next_id(cursor, table, column, prefix, digits=3):
+    cursor.execute(f"SELECT MAX({column}) AS max_id FROM {table}")
+    row = cursor.fetchone()
+    max_id = row["max_id"] if row else None
+    if not max_id:
+        return f"{prefix}{1:0{digits}d}"
+    n = int(str(max_id)[len(prefix):]) + 1
+    return f"{prefix}{n:0{digits}d}"
+
+
+def to_bool(value):
+    return str(value).lower() in {"1", "true", "on", "yes"}
+
+
+def safe_date(value):
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def is_invalid_date_range(start_date, end_date):
+    return bool(start_date and end_date and end_date < start_date)
+
+
+def parse_report_params():
+    return {
+        "report_type": request.args.get("type", "hours_by_site"),
+        "start_date": request.args.get("start_date", ""),
+        "end_date": request.args.get("end_date", ""),
+        "employee_id": request.args.get("employee_id", ""),
+        "site_id": request.args.get("site_id", ""),
+        "hourly_rate": float(request.args.get("hourly_rate") or 40.0),
+    }
+
+
+def load_report_filters(cur, company_id):
+    cur.execute("SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name", (company_id,))
+    employees_list = cur.fetchall()
+    cur.execute(
+        "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
+        (company_id,),
+    )
+    sites = cur.fetchall()
+    return employees_list, sites
+
+
+def fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate, default_to_pay_by_site=False):
+    if not (start_date and end_date):
+        return []
+
+    if report_type == "hours_by_site":
+        cur.execute(
+            """
+            SELECT js.SiteName, p.ProjectID, SUM(tc.Hours) AS TotalHours,
+                   COUNT(DISTINCT tc.EmployeeID) AS NumEmployees
+            FROM Timecard tc
+            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
+            GROUP BY js.SiteName, p.ProjectID
+            ORDER BY js.SiteName
+            """,
+            (company_id, start_date, end_date),
+        )
+        return cur.fetchall()
+
+    if report_type == "employee_hours":
+        sql = """
+            SELECT e.EmployeeID, e.Name, t.TradeName, SUM(tc.Hours) AS TotalHours,
+                   COUNT(DISTINCT s.SiteID) AS NumSites
+            FROM Timecard tc
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            JOIN Trade t ON t.TradeID = e.TradeID
+            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+            WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
+        """
+        params: list[Any] = [company_id, start_date, end_date]
+        if employee_id:
+            sql += " AND e.EmployeeID = %s"
+            params.append(employee_id)
+        sql += " GROUP BY e.EmployeeID, e.Name, t.TradeName ORDER BY e.Name"
+        cur.execute(sql, tuple(params))
+        return cur.fetchall()
+
+    if report_type == "pay_by_site" or default_to_pay_by_site:
+        sql = """
+            SELECT e.EmployeeID, e.Name, js.SiteName, p.ProjectID,
+                   SUM(tc.Hours) AS Hours,
+                   ROUND(SUM(tc.Hours) * %s, 2) AS TotalLaborCost
+            FROM Timecard tc
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
+        """
+        params: list[Any] = [hourly_rate, company_id, start_date, end_date]
+        if employee_id:
+            sql += " AND e.EmployeeID = %s"
+            params.append(employee_id)
+        if site_id:
+            sql += " AND js.SiteID = %s"
+            params.append(site_id)
+        sql += " GROUP BY e.EmployeeID, e.Name, js.SiteName, p.ProjectID ORDER BY e.Name, js.SiteName"
+        cur.execute(sql, tuple(params))
+        return cur.fetchall()
+
+    return []
+
+
+def authenticate_user(username, password):
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT u.UserID, u.CompanyID, u.Username, u.Password, c.CompanyName
+            FROM User_tbl u
+            JOIN Company c ON c.CompanyID = u.CompanyID
+            WHERE u.Username = %s
+            """,
+            (username,),
+        )
+        user = cur.fetchone()
+
+    if not user:
+        return None
+
+    stored = user["Password"]
+    valid = False
+
+    # Supports legacy seed data with plaintext passwords and newly created hashed passwords.
+    if stored.startswith("pbkdf2:") or stored.startswith("scrypt:"):
+        valid = check_password_hash(stored, password)
+    else:
+        valid = stored == password
+
+    return user if valid else None
+
+
+def authenticate_admin(username, password):
+    expected_username = os.getenv("ADMIN_USERNAME", "owner")
+    expected_password = os.getenv("ADMIN_PASSWORD", "owner123")
+    return username == expected_username and password == expected_password
+
+
+# --------------------------
+# Auth
+# --------------------------
+@app.route("/")
+def index():
+    if session.get("is_admin"):
+        return redirect(url_for("admin_companies"))
+    return redirect(url_for("dashboard") if session.get("user_id") else url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = authenticate_user(username, password)
+        if user:
+            session.clear()
+            session["user_id"] = user["UserID"]
+            session["company_id"] = user["CompanyID"]
+            session["username"] = user["Username"]
+            session["company_name"] = user["CompanyName"]
+            flash("Logged in successfully.", "success")
+            return redirect(url_for("dashboard"))
+        flash("Invalid username or password.", "danger")
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    with get_cursor() as cur:
+        cur.execute("SELECT CompanyID, CompanyName FROM Company ORDER BY CompanyName")
+        companies = cur.fetchall()
+
+    if request.method == "POST":
+        company_id = request.form.get("company_id", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if password != confirm:
+            flash("Passwords do not match.", "danger")
+            return render_template("register.html", companies=companies)
+
+        with get_conn() as conn:
+            cur = conn.cursor(dictionary=True)
+            cur.execute("SELECT COUNT(*) AS cnt FROM User_tbl WHERE Username = %s", (username,))
+            if cur.fetchone()["cnt"] > 0:
+                flash("Username already exists.", "danger")
+                cur.close()
+                return render_template("register.html", companies=companies)
+
+            user_id = next_id(cur, "User_tbl", "UserID", "USR", 3)
+            hashed = generate_password_hash(password)
+            # Password column in provided schema is VARCHAR(50). Hashed passwords need a larger column.
+            cur.execute(
+                """
+                INSERT INTO User_tbl (UserID, CompanyID, Username, Password)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (user_id, company_id, username, hashed),
+            )
+            cur.close()
+
+        flash("Account created. Please log in.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("register.html", companies=companies)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Logged out.", "info")
+    return redirect(url_for("login"))
+
+
+# --------------------------
+# Admin
+# --------------------------
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if session.get("is_admin"):
+        return redirect(url_for("admin_companies"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if authenticate_admin(username, password):
+            session.clear()
+            session["is_admin"] = True
+            session["admin_username"] = username
+            flash("Admin login successful.", "success")
+            return redirect(url_for("admin_companies"))
+        flash("Invalid admin credentials.", "danger")
+
+    return render_template("admin_login.html")
+
+
+@app.route("/admin/companies")
+@admin_required
+def admin_companies():
+    with get_cursor() as cur:
+        cur.execute("SELECT CompanyID, CompanyName FROM Company ORDER BY CompanyName")
+        companies = cur.fetchall()
+    return render_template("admin_companies.html", companies=companies)
+
+
+@app.route("/admin/companies/add", methods=["POST"])
+@admin_required
+def admin_add_company():
+    company_id = request.form.get("company_id", "").strip()
+    company_name = request.form.get("company_name", "").strip()
+
+    if not company_id or not company_name:
+        flash("Company ID and Company Name are required.", "danger")
+        return redirect(url_for("admin_companies"))
+
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT COUNT(*) AS cnt FROM Company WHERE CompanyID=%s", (company_id,))
+        if cur.fetchone()["cnt"] > 0:
+            cur.close()
+            flash("Company ID already exists.", "danger")
+            return redirect(url_for("admin_companies"))
+        cur.execute("INSERT INTO Company (CompanyID, CompanyName) VALUES (%s, %s)", (company_id, company_name))
+        cur.close()
+
+    flash("Company created.", "success")
+    return redirect(url_for("admin_companies"))
+
+
+@app.route("/admin/companies/<company_id>/edit", methods=["POST"])
+@admin_required
+def admin_edit_company(company_id):
+    company_name = request.form.get("company_name", "").strip()
+    if not company_name:
+        flash("Company Name is required.", "danger")
+        return redirect(url_for("admin_companies"))
+
+    with get_cursor() as cur:
+        cur.execute("UPDATE Company SET CompanyName=%s WHERE CompanyID=%s", (company_name, company_id))
+    flash("Company updated.", "success")
+    return redirect(url_for("admin_companies"))
+
+
+@app.route("/admin/companies/<company_id>/delete", methods=["POST"])
+@admin_required
+def admin_delete_company(company_id):
+    try:
+        with get_cursor() as cur:
+            cur.execute("DELETE FROM Company WHERE CompanyID=%s", (company_id,))
+        flash("Company deleted.", "info")
+    except Exception:
+        flash("Could not delete company. It may still be referenced by users or records.", "danger")
+    return redirect(url_for("admin_companies"))
+
+
+# --------------------------
+# Dashboard
+# --------------------------
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS total FROM Employee WHERE CompanyID=%s AND Active=TRUE", (company_id,))
+        active_employees = cur.fetchone()["total"]
+
+        cur.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM Timecard tc
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            WHERE e.CompanyID=%s
+            """,
+            (company_id,),
+        )
+        total_timecards = cur.fetchone()["total"]
+
+        cur.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM Payment p
+            JOIN Payroll pr ON pr.PayrollID = p.PayrollID
+            WHERE pr.CompanyID=%s
+            """,
+            (company_id,),
+        )
+        total_payments = cur.fetchone()["total"]
+
+        cur.execute(
+            "SELECT PayrollID, PeriodStart, PeriodEnd FROM Payroll WHERE CompanyID=%s ORDER BY PeriodEnd DESC LIMIT 1",
+            (company_id,),
+        )
+        latest_payroll = cur.fetchone()
+
+    return render_template(
+        "dashboard.html",
+        active_employees=active_employees,
+        total_timecards=total_timecards,
+        total_payments=total_payments,
+        latest_payroll=latest_payroll,
+    )
+
+
+# --------------------------
+# Employees
+# --------------------------
+@app.route("/employees")
+@login_required
+def employees():
+    company_id = session["company_id"]
+    search = request.args.get("search", "").strip()
+    active = request.args.get("active", "")
+
+    sql = """
+        SELECT e.EmployeeID, e.Name, e.Active, e.UnionID, e.TradeID, t.TradeName,
+               u.UnionName
+        FROM Employee e
+        JOIN Trade t ON e.TradeID = t.TradeID
+        LEFT JOIN Union_tbl u ON e.UnionID = u.UnionID
+        WHERE e.CompanyID = %s
+    """
+    params: list[Any] = [company_id]
+    if search:
+        sql += " AND e.Name LIKE %s"
+        params.append(f"%{search}%")
+    if active in {"0", "1"}:
+        sql += " AND e.Active = %s"
+        params.append(int(active))
+    sql += " ORDER BY e.Name"
+
+    with get_cursor() as cur:
+        cur.execute("SELECT TradeID, TradeName FROM Trade ORDER BY TradeName")
+        trades = cur.fetchall()
+        cur.execute("SELECT UnionID, UnionName FROM Union_tbl ORDER BY UnionName")
+        unions = cur.fetchall()
+        cur.execute(sql, tuple(params))
+        employees = cur.fetchall()
+
+    return render_template("employees.html", employees=employees, trades=trades, unions=unions)
+
+
+@app.route("/employees/add", methods=["POST"])
+@login_required
+def add_employee():
+    company_id = session["company_id"]
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        employee_id = next_id(cur, "Employee", "EmployeeID", "E", 5)
+        cur.execute(
+            """
+            INSERT INTO Employee (EmployeeID, CompanyID, UnionID, TradeID, Name, Active)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                employee_id,
+                company_id,
+                request.form.get("union_id") or None,
+                request.form.get("trade_id"),
+                request.form.get("name"),
+                to_bool(request.form.get("active")),
+            ),
+        )
+        cur.close()
+    flash("Employee added.", "success")
+    return redirect(url_for("employees"))
+
+
+@app.route("/employees/<employee_id>/edit", methods=["POST"])
+@login_required
+def edit_employee(employee_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE Employee
+            SET Name=%s, UnionID=%s, TradeID=%s, Active=%s
+            WHERE EmployeeID=%s AND CompanyID=%s
+            """,
+            (
+                request.form.get("name"),
+                request.form.get("union_id") or None,
+                request.form.get("trade_id"),
+                to_bool(request.form.get("active")),
+                employee_id,
+                company_id,
+            ),
+        )
+    flash("Employee updated.", "success")
+    return redirect(url_for("employees"))
+
+
+@app.route("/employees/<employee_id>/delete", methods=["POST"])
+@login_required
+def delete_employee(employee_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
+    flash("Employee deleted.", "info")
+    return redirect(url_for("employees"))
+
+
+# --------------------------
+# Projects / Job sites
+# --------------------------
+@app.route("/projects")
+@login_required
+def projects():
+    company_id = session["company_id"]
+    status = request.args.get("status", "")
+
+    sql = """
+        SELECT p.ProjectID, p.Status, COUNT(js.SiteID) AS SiteCount
+        FROM Project p
+        LEFT JOIN Job_site js ON js.ProjectID = p.ProjectID
+        WHERE p.CompanyID = %s
+    """
+    params: list[Any] = [company_id]
+    if status in {"0", "1"}:
+        sql += " AND p.Status = %s"
+        params.append(int(status))
+    sql += " GROUP BY p.ProjectID, p.Status ORDER BY p.ProjectID"
+
+    with get_cursor() as cur:
+        cur.execute(sql, tuple(params))
+        projects = cur.fetchall()
+        cur.execute(
+            """
+            SELECT js.SiteID, js.ProjectID, js.SiteName, js.Location
+            FROM Job_site js
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE p.CompanyID = %s
+            ORDER BY js.SiteName
+            """,
+            (company_id,),
+        )
+        sites = cur.fetchall()
+
+    return render_template("projects.html", projects=projects, sites=sites)
+
+
+@app.route("/projects/add", methods=["POST"])
+@login_required
+def add_project():
+    company_id = session["company_id"]
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        project_id = next_id(cur, "Project", "ProjectID", "P", 5)
+        cur.execute(
+            "INSERT INTO Project (ProjectID, CompanyID, Status) VALUES (%s, %s, %s)",
+            (project_id, company_id, to_bool(request.form.get("status"))),
+        )
+        cur.close()
+    flash("Project added.", "success")
+    return redirect(url_for("projects"))
+
+
+@app.route("/projects/<project_id>/edit", methods=["POST"])
+@login_required
+def edit_project(project_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            "UPDATE Project SET Status=%s WHERE ProjectID=%s AND CompanyID=%s",
+            (to_bool(request.form.get("status")), project_id, company_id),
+        )
+    flash("Project updated.", "success")
+    return redirect(url_for("projects"))
+
+
+@app.route("/projects/<project_id>/delete", methods=["POST"])
+@login_required
+def delete_project(project_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
+    flash("Project deleted.", "info")
+    return redirect(url_for("projects"))
+
+
+@app.route("/sites/add", methods=["POST"])
+@login_required
+def add_site():
+    company_id = session["company_id"]
+    project_id = request.form.get("project_id")
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
+        if not cur.fetchone():
+            cur.close()
+            flash("Invalid project for this company.", "danger")
+            return redirect(url_for("projects"))
+        site_id = next_id(cur, "Job_site", "SiteID", "S", 5)
+        cur.execute(
+            "INSERT INTO Job_site (SiteID, ProjectID, SiteName, Location) VALUES (%s, %s, %s, %s)",
+            (site_id, project_id, request.form.get("site_name"), request.form.get("location")),
+        )
+        cur.close()
+    flash("Job site added.", "success")
+    return redirect(url_for("projects"))
+
+
+@app.route("/sites/<site_id>/edit", methods=["POST"])
+@login_required
+def edit_site(site_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s",
+            (request.form.get("project_id"), company_id),
+        )
+        if not cur.fetchone():
+            flash("Invalid project for this company.", "danger")
+            return redirect(url_for("projects"))
+        cur.execute(
+            """
+            UPDATE Job_site
+            SET ProjectID=%s, SiteName=%s, Location=%s
+            WHERE SiteID=%s AND ProjectID IN (SELECT ProjectID FROM Project WHERE CompanyID=%s)
+            """,
+            (
+                request.form.get("project_id"),
+                request.form.get("site_name"),
+                request.form.get("location"),
+                site_id,
+                company_id,
+            ),
+        )
+    flash("Job site updated.", "success")
+    return redirect(url_for("projects"))
+
+
+@app.route("/sites/<site_id>/delete", methods=["POST"])
+@login_required
+def delete_site(site_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            "DELETE FROM Job_site WHERE SiteID=%s AND ProjectID IN (SELECT ProjectID FROM Project WHERE CompanyID=%s)",
+            (site_id, company_id),
+        )
+    flash("Job site deleted.", "info")
+    return redirect(url_for("projects"))
+
+
+# --------------------------
+# Assignments / schedules
+# --------------------------
+@app.route("/assignments")
+@login_required
+def assignments():
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
+                   s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
+                   s.StartDate, s.EndDate, p.Status AS ProjectStatus
+            FROM Timecard tc
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            JOIN Trade t ON t.TradeID = e.TradeID
+            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE e.CompanyID = %s
+            ORDER BY e.Name, s.StartDate
+            """,
+            (company_id,),
+        )
+        assignments = cur.fetchall()
+
+        cur.execute(
+            "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
+            (company_id,),
+        )
+        sites = cur.fetchall()
+
+    return render_template("assignments.html", assignments=assignments, sites=sites)
+
+
+@app.route("/assignments/<schedule_id>/edit", methods=["POST"])
+@login_required
+def edit_assignment(schedule_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE Schedule
+            SET SiteID=%s, StartDate=%s, EndDate=%s
+            WHERE ScheduleID=%s
+              AND SiteID IN (
+                SELECT js.SiteID FROM Job_site js
+                JOIN Project p ON p.ProjectID = js.ProjectID
+                WHERE p.CompanyID = %s
+              )
+            """,
+            (
+                request.form.get("site_id"),
+                safe_date(request.form.get("start_date")),
+                safe_date(request.form.get("end_date")),
+                schedule_id,
+                company_id,
+            ),
+        )
+    flash("Assignment updated.", "success")
+    return redirect(url_for("assignments"))
+
+
+# --------------------------
+# Timecards
+# --------------------------
+@app.route("/timecards")
+@login_required
+def timecards():
+    company_id = session["company_id"]
+    employee_id = request.args.get("employee_id", "").strip()
+    work_date = request.args.get("date", "").strip()
+
+    sql = """
+        SELECT tc.TimecardID, tc.ScheduleID, tc.EmployeeID, tc.Date, tc.Hours,
+               e.Name AS EmployeeName, js.SiteName, p.ProjectID
+        FROM Timecard tc
+        JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+        JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+        JOIN Job_site js ON js.SiteID = s.SiteID
+        JOIN Project p ON p.ProjectID = js.ProjectID
+        WHERE e.CompanyID = %s
+    """
+    params: list[Any] = [company_id]
+    if employee_id:
+        sql += " AND tc.EmployeeID = %s"
+        params.append(employee_id)
+    if work_date:
+        sql += " AND tc.Date = %s"
+        params.append(work_date)
+    sql += " ORDER BY tc.Date DESC, e.Name"
+
+    with get_cursor() as cur:
+        cur.execute("SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name", (company_id,))
+        employees_list = cur.fetchall()
+        cur.execute(
+            """
+            SELECT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
+            FROM Schedule s
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE p.CompanyID = %s
+            ORDER BY s.StartDate DESC
+            """,
+            (company_id,),
+        )
+        schedules = cur.fetchall()
+        cur.execute(sql, tuple(params))
+        timecards = cur.fetchall()
+
+    return render_template(
+        "timecards.html",
+        timecards=timecards,
+        employees=employees_list,
+        schedules=schedules,
+    )
+
+
+@app.route("/timecards/add", methods=["POST"])
+@login_required
+def add_timecard():
+    company_id = session["company_id"]
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        employee_id = request.form.get("employee_id")
+        cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
+        if not cur.fetchone():
+            cur.close()
+            flash("Invalid employee for this company.", "danger")
+            return redirect(url_for("timecards"))
+        timecard_id = next_id(cur, "Timecard", "TimecardID", "TC", 4)
+        cur.execute(
+            """
+            INSERT INTO Timecard (TimecardID, ScheduleID, EmployeeID, Date, Hours)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                timecard_id,
+                request.form.get("schedule_id"),
+                employee_id,
+                safe_date(request.form.get("date")),
+                float(request.form.get("hours")),
+            ),
+        )
+        cur.close()
+    flash("Timecard added.", "success")
+    return redirect(url_for("timecards"))
+
+
+@app.route("/timecards/<timecard_id>/edit", methods=["POST"])
+@login_required
+def edit_timecard(timecard_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            UPDATE Timecard
+            SET ScheduleID=%s, EmployeeID=%s, Date=%s, Hours=%s
+            WHERE TimecardID=%s
+              AND EmployeeID IN (SELECT EmployeeID FROM Employee WHERE CompanyID=%s)
+            """,
+            (
+                request.form.get("schedule_id"),
+                request.form.get("employee_id"),
+                safe_date(request.form.get("date")),
+                float(request.form.get("hours")),
+                timecard_id,
+                company_id,
+            ),
+        )
+    flash("Timecard updated.", "success")
+    return redirect(url_for("timecards"))
+
+
+@app.route("/timecards/<timecard_id>/delete", methods=["POST"])
+@login_required
+def delete_timecard(timecard_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            "DELETE FROM Timecard WHERE TimecardID=%s AND EmployeeID IN (SELECT EmployeeID FROM Employee WHERE CompanyID=%s)",
+            (timecard_id, company_id),
+        )
+    flash("Timecard deleted.", "info")
+    return redirect(url_for("timecards"))
+
+
+# --------------------------
+# Payroll
+# --------------------------
+@app.route("/payroll", methods=["GET", "POST"])
+@login_required
+def payroll():
+    company_id = session["company_id"]
+
+    if request.method == "POST":
+        start_date = safe_date(request.form.get("start_date"))
+        end_date = safe_date(request.form.get("end_date"))
+        if is_invalid_date_range(start_date, end_date):
+            flash("End date cannot be before start date.", "danger")
+            return redirect(url_for("payroll"))
+        hourly_rate = float(request.form.get("hourly_rate") or 40.0)
+        deduction = float(request.form.get("deduction") or 0.0)
+
+        with get_conn() as conn:
+            cur = conn.cursor(dictionary=True)
+            payroll_id = next_id(cur, "Payroll", "PayrollID", "PR", 4)
+            cur.execute(
+                "INSERT INTO Payroll (PayrollID, CompanyID, PeriodStart, PeriodEnd) VALUES (%s, %s, %s, %s)",
+                (payroll_id, company_id, start_date, end_date),
+            )
+
+            cur.execute(
+                """
+                SELECT tc.EmployeeID, ROUND(SUM(tc.Hours) * %s, 2) AS amount
+                FROM Timecard tc
+                JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+                WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
+                GROUP BY tc.EmployeeID
+                """,
+                (hourly_rate, company_id, start_date, end_date),
+            )
+            rows = cur.fetchall()
+
+            for row in rows:
+                payment_id = next_id(cur, "Payment", "PaymentID", "PM", 4)
+                cur.execute(
+                    "INSERT INTO Payment (PaymentID, PayrollID, EmployeeID, Amount, Deduction) VALUES (%s, %s, %s, %s, %s)",
+                    (payment_id, payroll_id, row["EmployeeID"], row["amount"], deduction),
+                )
+            cur.close()
+        flash("Payroll run completed.", "success")
+        return redirect(url_for("payroll"))
+
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT pr.PayrollID, pr.PeriodStart, pr.PeriodEnd,
+                   COUNT(DISTINCT p.EmployeeID) AS num_employees,
+                   COALESCE(SUM(p.Amount), 0) AS total_gross,
+                   COALESCE(SUM(p.Amount - p.Deduction), 0) AS total_net
+            FROM Payroll pr
+            LEFT JOIN Payment p ON p.PayrollID = pr.PayrollID
+            WHERE pr.CompanyID = %s
+            GROUP BY pr.PayrollID, pr.PeriodStart, pr.PeriodEnd
+            ORDER BY pr.PeriodEnd DESC
+            """,
+            (company_id,),
+        )
+        payrolls = cur.fetchall()
+
+    return render_template("payroll.html", payrolls=payrolls)
+
+
+# --------------------------
+# Reports
+# --------------------------
+@app.route("/reports")
+@login_required
+def reports():
+    company_id = session["company_id"]
+    report_params = parse_report_params()
+    report_type = report_params["report_type"]
+    start_date = report_params["start_date"]
+    end_date = report_params["end_date"]
+    employee_id = report_params["employee_id"]
+    site_id = report_params["site_id"]
+    hourly_rate = report_params["hourly_rate"]
+
+    if is_invalid_date_range(safe_date(start_date), safe_date(end_date)):
+        flash("End date cannot be before start date.", "danger")
+        return redirect(url_for("reports", type=report_type))
+
+    with get_cursor() as cur:
+        employees_list, sites = load_report_filters(cur, company_id)
+        rows = fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate)
+
+    return render_template(
+        "reports.html",
+        rows=rows,
+        report_type=report_type,
+        employees=employees_list,
+        sites=sites,
+        start_date=start_date,
+        end_date=end_date,
+        employee_id=employee_id,
+        site_id=site_id,
+        hourly_rate=hourly_rate,
+    )
+
+
+@app.route("/reports/export")
+@login_required
+def export_report():
+    with app.test_request_context(
+        "/reports",
+        query_string=request.query_string,
+    ):
+        reports()
+    # Re-run data fetch here for clean CSV.
+    company_id = session["company_id"]
+    report_params = parse_report_params()
+    report_type = report_params["report_type"]
+    start_date = report_params["start_date"]
+    end_date = report_params["end_date"]
+    employee_id = report_params["employee_id"]
+    site_id = report_params["site_id"]
+    hourly_rate = report_params["hourly_rate"]
+
+    if is_invalid_date_range(safe_date(start_date), safe_date(end_date)):
+        flash("End date cannot be before start date.", "danger")
+        return redirect(url_for("reports", type=report_type))
+
+    with get_cursor() as cur:
+        rows = fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate, default_to_pay_by_site=True)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    if rows:
+        writer.writerow(rows[0].keys())
+        for row in rows:
+            writer.writerow(row.values())
+    csv_bytes = output.getvalue()
+    return Response(
+        csv_bytes,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={report_type}.csv"},
+    )
+
+
+@app.errorhandler(Exception)
+def handle_error(exc):
+    return render_template("error.html", error=str(exc)), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True)

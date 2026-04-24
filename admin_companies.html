@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}BLUE | Admin Companies{% endblock %}
+{% block content %}
+<h1 class="page-title">Admin Company Management</h1>
+
+<section class="toolbar-card">
+  <h2 class="section-title">Create Company</h2>
+  <form method="post" action="{{ url_for('admin_add_company') }}" class="toolbar-grid two-up">
+    <label><span>Company ID</span><input type="text" name="company_id" required></label>
+    <label><span>Company Name</span><input type="text" name="company_name" required></label>
+    <button class="pixel-btn primary" type="submit">Create</button>
+  </form>
+</section>
+
+<section class="table-card">
+  <h2 class="section-title">All Companies</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Company ID</th><th>Company Name</th><th>Save</th><th>Delete</th></tr>
+    </thead>
+    <tbody>
+      {% for company in companies %}
+      <tr>
+        <form method="post" action="{{ url_for('admin_edit_company', company_id=company.CompanyID) }}">
+          <td>{{ company.CompanyID }}</td>
+          <td><input type="text" name="company_name" value="{{ company.CompanyName }}" required></td>
+          <td><button type="submit" class="pixel-btn secondary small-btn">Save</button></td>
+        </form>
+        <td>
+          <form method="post" action="{{ url_for('admin_delete_company', company_id=company.CompanyID) }}" onsubmit="return confirm('Delete this company?');">
+            <button type="submit" class="pixel-btn danger small-btn">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

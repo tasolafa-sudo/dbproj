@@ -10,6 +10,7 @@
     <label><span>Employee</span><select name="employee_id"><option value="">All employees</option>{% for employee in employees %}<option value="{{ employee.EmployeeID }}" {% if employee.EmployeeID == employee_id %}selected{% endif %}>{{ employee.Name }}</option>{% endfor %}</select></label>
     <label><span>Hourly Rate</span><input type="number" step="0.01" name="hourly_rate" value="{{ hourly_rate }}"></label>
     <button class="pixel-btn primary" type="submit">Run Report</button>
+    <input type="hidden" name="type" value="{{ report_type }}">
   </form>
 </section>
 
@@ -46,6 +47,8 @@
       {% endfor %}
     </tbody>
   </table>
+  {% elif start_date and end_date %}
+  <p class="empty-report">No results found in date range.</p>
   {% endif %}
 </section>
 {% endblock %}

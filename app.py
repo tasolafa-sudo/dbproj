@@ -1056,12 +1056,6 @@ def reports():
 @app.route("/reports/export")
 @login_required
 def export_report():
-    with app.test_request_context(
-        "/reports",
-        query_string=request.query_string,
-    ):
-        reports()
-    # Re-run data fetch here for clean CSV.
     company_id = session["company_id"]
     report_params = parse_report_params()
     report_type = report_params["report_type"]

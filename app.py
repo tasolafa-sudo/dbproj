@@ -801,6 +801,11 @@ def assignments():
 @login_required
 def edit_assignment(schedule_id):
     company_id = session["company_id"]
+    start_date = safe_date(request.form.get("start_date"))
+    end_date = safe_date(request.form.get("end_date"))
+    if is_invalid_date_range(start_date, end_date):
+        flash("End date cannot be before start date.", "danger")
+        return redirect(url_for("assignments"))
     with get_cursor() as cur:
         cur.execute(
             """
@@ -815,8 +820,8 @@ def edit_assignment(schedule_id):
             """,
             (
                 request.form.get("site_id"),
-                safe_date(request.form.get("start_date")),
-                safe_date(request.form.get("end_date")),
+                start_date,
+                end_date,
                 schedule_id,
                 company_id,
             ),

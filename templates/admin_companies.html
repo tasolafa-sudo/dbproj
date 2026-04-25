@@ -21,15 +21,14 @@
     </thead>
     <tbody>
       {% for company in companies %}
+      <form id="edit-company-{{ company.CompanyID }}" method="post" action="{{ url_for('admin_edit_company', company_id=company.CompanyID) }}"></form>
       <tr>
-        <form method="post" action="{{ url_for('admin_edit_company', company_id=company.CompanyID) }}">
-          <td>{{ company.CompanyID }}</td>
-          <td><input type="text" name="company_name" value="{{ company.CompanyName }}" required></td>
-          <td>
-            <input type="password" name="company_auth_code" placeholder="{% if company.HasAuthCode %}Leave blank to keep{% else %}Set auth code{% endif %}">
-          </td>
-          <td><button type="submit" class="pixel-btn secondary small-btn">Save</button></td>
-        </form>
+        <td>{{ company.CompanyID }}</td>
+        <td><input type="text" name="company_name" value="{{ company.CompanyName }}" form="edit-company-{{ company.CompanyID }}" required></td>
+        <td>
+          <input type="password" name="company_auth_code" form="edit-company-{{ company.CompanyID }}" placeholder="{% if company.HasAuthCode %}Leave blank to keep{% else %}Set auth code{% endif %}">
+        </td>
+        <td><button type="submit" class="pixel-btn secondary small-btn" form="edit-company-{{ company.CompanyID }}">Save</button></td>
         <td>
           <form method="post" action="{{ url_for('admin_delete_company', company_id=company.CompanyID) }}" onsubmit="return confirm('Delete this company?');">
             <button type="submit" class="pixel-btn danger small-btn">Delete</button>

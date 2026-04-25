@@ -125,6 +125,7 @@ def load_logged_in_user():
 
 
 def next_id(cursor, table, column, prefix, digits=3):
+    cursor.execute(f"LOCK TABLES {table} WRITE")
     cursor.execute(f"SELECT MAX({column}) AS max_id FROM {table}")
     row = cursor.fetchone()
     max_id = row["max_id"] if row else None
@@ -345,6 +346,7 @@ def register():
                 """,
                 (user_id, company_id, username, hashed),
             )
+            cur.execute("UNLOCK TABLES")
             cur.close()
 
         flash("Account created. Please log in.", "success")
@@ -580,6 +582,7 @@ def add_employee():
                 to_bool(request.form.get("active")),
             ),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Employee added.", "success")
     return redirect(url_for("employees"))
@@ -669,6 +672,7 @@ def add_project():
             "INSERT INTO Project (ProjectID, CompanyID, Status) VALUES (%s, %s, %s)",
             (project_id, company_id, to_bool(request.form.get("status"))),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Project added.", "success")
     return redirect(url_for("projects"))
@@ -714,6 +718,7 @@ def add_site():
             "INSERT INTO Job_site (SiteID, ProjectID, SiteName, Location) VALUES (%s, %s, %s, %s)",
             (site_id, project_id, request.form.get("site_name"), request.form.get("location")),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Job site added.", "success")
     return redirect(url_for("projects"))
@@ -911,6 +916,7 @@ def add_timecard():
                 float(request.form.get("hours")),
             ),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Timecard added.", "success")
     return redirect(url_for("timecards"))
@@ -978,6 +984,7 @@ def payroll():
                 "INSERT INTO Payroll (PayrollID, CompanyID, PeriodStart, PeriodEnd) VALUES (%s, %s, %s, %s)",
                 (payroll_id, company_id, start_date, end_date),
             )
+            cur.execute("UNLOCK TABLES")
 
             cur.execute(
                 """
@@ -997,6 +1004,7 @@ def payroll():
                     "INSERT INTO Payment (PaymentID, PayrollID, EmployeeID, Amount, Deduction) VALUES (%s, %s, %s, %s, %s)",
                     (payment_id, payroll_id, row["EmployeeID"], row["amount"], deduction),
                 )
+                cur.execute("UNLOCK TABLES")
             cur.close()
         flash("Payroll run completed.", "success")
         return redirect(url_for("payroll"))

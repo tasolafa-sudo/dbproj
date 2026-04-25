@@ -8,6 +8,7 @@
   <form method="post" action="{{ url_for('admin_add_company') }}" class="toolbar-grid two-up">
     <label><span>Company ID</span><input type="text" name="company_id" required></label>
     <label><span>Company Name</span><input type="text" name="company_name" required></label>
+    <label><span>Auth Code</span><input type="password" name="company_auth_code" required></label>
     <button class="pixel-btn primary" type="submit">Create</button>
   </form>
 </section>
@@ -16,7 +17,7 @@
   <h2 class="section-title">All Companies</h2>
   <table class="data-table">
     <thead>
-      <tr><th>Company ID</th><th>Company Name</th><th>Save</th><th>Delete</th></tr>
+      <tr><th>Company ID</th><th>Company Name</th><th>Auth Code</th><th>Save</th><th>Delete</th></tr>
     </thead>
     <tbody>
       {% for company in companies %}
@@ -24,6 +25,9 @@
         <form method="post" action="{{ url_for('admin_edit_company', company_id=company.CompanyID) }}">
           <td>{{ company.CompanyID }}</td>
           <td><input type="text" name="company_name" value="{{ company.CompanyName }}" required></td>
+          <td>
+            <input type="password" name="company_auth_code" placeholder="{% if company.HasAuthCode %}Leave blank to keep{% else %}Set auth code{% endif %}">
+          </td>
           <td><button type="submit" class="pixel-btn secondary small-btn">Save</button></td>
         </form>
         <td>

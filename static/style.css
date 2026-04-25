@@ -80,9 +80,6 @@ input, select {
 .auth-flashes { width: min(760px, 92vw); margin-bottom: 12px; }
 .flash-stack { display: grid; gap: 10px; margin-bottom: 14px; }
 .flash { border: 1px solid #999; background: #fff; padding: 10px 12px; }
-.flash.success { border-left: 4px solid var(--success); }
-.flash.danger { border-left: 4px solid var(--danger); }
-.flash.warning, .flash.info { border-left: 4px solid var(--warn); }
 .app-shell {
   max-width: 1260px;
   margin: 0 auto;

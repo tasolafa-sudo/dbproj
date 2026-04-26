@@ -5,6 +5,7 @@
 
 <section class="toolbar-card">
   <form method="get" class="toolbar-grid two-up">
+    <label><span>Search Name</span><input type="text" name="search" value="{{ search }}" placeholder="Project name or ID"></label>
     <label><span>Filter</span>
       <select name="status">
         <option value="">Active or completed</option>
@@ -22,12 +23,13 @@
   <h2 class="section-title">Projects</h2>
   <table class="data-table">
     <thead>
-      <tr><th>Project ID</th><th>Status</th><th># Sites</th><th>Details</th></tr>
+      <tr><th>Project ID</th><th>Project Name</th><th>Status</th><th># Sites</th><th>Details</th></tr>
     </thead>
     <tbody>
       {% for project in projects %}
       <tr>
         <td>{{ project.ProjectID }}</td>
+        <td>{{ project.ProjectName }}</td>
         <td>{{ 'Active' if project.Status else 'Completed' }}</td>
         <td>{{ project.SiteCount }}</td>
         <td><button type="button" class="table-link" data-open-modal="project-{{ project.ProjectID }}">Details</button></td>
@@ -52,11 +54,11 @@
   </table>
 </section>
 
-<div class="modal" id="add-project-modal"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Add Project</h2><form method="post" action="{{ url_for('add_project') }}" class="form-grid single"><label><span>Status</span><select name="status"><option value="1">Active</option><option value="0">Completed</option></select></label><button class="pixel-btn primary wide" type="submit">Add</button></form></div></div>
+<div class="modal" id="add-project-modal"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Add Project</h2><form method="post" action="{{ url_for('add_project') }}" class="form-grid single"><label><span>Project Name</span><input type="text" name="project_name" required></label><label><span>Status</span><select name="status"><option value="1">Active</option><option value="0">Completed</option></select></label><button class="pixel-btn primary wide" type="submit">Add</button></form></div></div>
 <div class="modal" id="add-site-modal"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Add Site</h2><form method="post" action="{{ url_for('add_site') }}" class="form-grid single"><label><span>Project</span><select name="project_id">{% for project in projects %}<option value="{{ project.ProjectID }}">{{ project.ProjectID }}</option>{% endfor %}</select></label><label><span>Site Name</span><input type="text" name="site_name" required></label><label><span>Location</span><input type="text" name="location" required></label><button class="pixel-btn primary wide" type="submit">Add</button></form></div></div>
 
 {% for project in projects %}
-<div class="modal" id="project-{{ project.ProjectID }}"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Project Details</h2><form method="post" action="{{ url_for('edit_project', project_id=project.ProjectID) }}" class="form-grid single"><label><span>Project ID</span><input type="text" value="{{ project.ProjectID }}" disabled></label><label><span>Status</span><select name="status"><option value="1" {% if project.Status %}selected{% endif %}>Active</option><option value="0" {% if not project.Status %}selected{% endif %}>Completed</option></select></label><button type="submit" class="pixel-btn primary wide">Save</button></form><form method="post" action="{{ url_for('delete_project', project_id=project.ProjectID) }}" onsubmit="return confirm('Delete this project?');"><button type="submit" class="pixel-btn danger wide">Delete</button></form></div></div>
+<div class="modal" id="project-{{ project.ProjectID }}"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Project Details</h2><form method="post" action="{{ url_for('edit_project', project_id=project.ProjectID) }}" class="form-grid single"><label><span>Project ID</span><input type="text" value="{{ project.ProjectID }}" disabled></label><label><span>Project Name</span><input type="text" name="project_name" value="{{ project.ProjectName }}" required></label><label><span>Status</span><select name="status"><option value="1" {% if project.Status %}selected{% endif %}>Active</option><option value="0" {% if not project.Status %}selected{% endif %}>Completed</option></select></label><button type="submit" class="pixel-btn primary wide">Save</button></form><form method="post" action="{{ url_for('delete_project', project_id=project.ProjectID) }}" onsubmit="return confirm('Delete this project?');"><button type="submit" class="pixel-btn danger wide">Delete</button></form></div></div>
 {% endfor %}
 
 {% for site in sites %}

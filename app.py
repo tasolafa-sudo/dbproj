@@ -654,9 +654,10 @@ def delete_employee(employee_id):
 def projects():
     company_id = session["company_id"]
     status = request.args.get("status", "")
+    search = request.args.get("search", "").strip()
 
     sql = """
-        SELECT p.ProjectID, p.Status, COUNT(js.SiteID) AS SiteCount
+        SELECT p.ProjectID, p.ProjectName, p.Status, COUNT(js.SiteID) AS SiteCount
         FROM Project p
         LEFT JOIN Job_site js ON js.ProjectID = p.ProjectID
         WHERE p.CompanyID = %s
@@ -665,7 +666,10 @@ def projects():
     if status in {"0", "1"}:
         sql += " AND p.Status = %s"
         params.append(int(status))
-    sql += " GROUP BY p.ProjectID, p.Status ORDER BY p.ProjectID"
+    if search:
+        sql += " AND (p.ProjectName LIKE %s OR p.ProjectID LIKE %s)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    sql += " GROUP BY p.ProjectID, p.ProjectName, p.Status ORDER BY p.ProjectID"
 
     with get_cursor() as cur:
         cur.execute(sql, tuple(params))
@@ -682,7 +686,7 @@ def projects():
         )
         sites = cur.fetchall()
 
-    return render_template("projects.html", projects=projects, sites=sites)
+    return render_template("projects.html", projects=projects, sites=sites, search=search)
 
 
 @app.route("/projects/add", methods=["POST"])
@@ -693,8 +697,8 @@ def add_project():
         cur = conn.cursor(dictionary=True)
         project_id = next_id(cur, "Project", "ProjectID", "P", 5)
         cur.execute(
-            "INSERT INTO Project (ProjectID, CompanyID, Status) VALUES (%s, %s, %s)",
-            (project_id, company_id, to_bool(request.form.get("status"))),
+            "INSERT INTO Project (ProjectID, CompanyID, ProjectName, Status) VALUES (%s, %s, %s, %s)",
+            (project_id, company_id, request.form.get("project_name", "").strip(), to_bool(request.form.get("status"))),
         )
         cur.execute("UNLOCK TABLES")
         cur.close()
@@ -708,8 +712,8 @@ def edit_project(project_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
         cur.execute(
-            "UPDATE Project SET Status=%s WHERE ProjectID=%s AND CompanyID=%s",
-            (to_bool(request.form.get("status")), project_id, company_id),
+            "UPDATE Project SET ProjectName=%s, Status=%s WHERE ProjectID=%s AND CompanyID=%s",
+            (request.form.get("project_name", "").strip(), to_bool(request.form.get("status")), project_id, company_id),
         )
     flash("Project updated.", "success")
     return redirect(url_for("projects"))

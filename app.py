@@ -880,6 +880,7 @@ def edit_assignment(schedule_id):
                 start_date,
                 end_date,
                 schedule_id,
+                request.form.get("employee_id"),
                 company_id,
             ),
         )

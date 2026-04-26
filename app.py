@@ -13,6 +13,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import warnings
 from db import get_conn, get_cursor
+from migrations import ensure_db_constraints, ensure_db_functions, ensure_project_name_column
 
 load_dotenv()
 
@@ -93,6 +94,7 @@ def ensure_company_auth_table():
 
 _password_column_checked = False
 _company_auth_table_checked = False
+_migrations_run = False
 
 
 @app.before_request
@@ -100,7 +102,7 @@ def _ensure_password_column_once():
     # Run after the server is up so import-time DB access cannot block Gunicorn boot.
     if request.path == "/health":
         return
-    global _password_column_checked, _company_auth_table_checked
+    global _password_column_checked, _company_auth_table_checked, _migrations_run
     if _password_column_checked:
         if not _company_auth_table_checked:
             _company_auth_table_checked = True
@@ -110,6 +112,11 @@ def _ensure_password_column_once():
     _company_auth_table_checked = True
     ensure_password_column_size()
     ensure_company_auth_table()
+    if not _migrations_run:
+        _migrations_run = True
+        ensure_project_name_column()
+        ensure_db_functions()
+        ensure_db_constraints()
 
 
 def login_required(view):

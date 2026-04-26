@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 from flask import Flask, Response, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from flask_limiter import Limiter 
+from flask_limiter.util import get_remote_address
+
 from db import get_conn, get_cursor
 
 load_dotenv()
@@ -16,6 +19,18 @@ load_dotenv()
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
 
+# -------------------------- 
+# Rate limiter 
+# -------------------------- 
+
+def get_user_key(): 
+    return session.get("user_id") or get_remote_address() 
+    
+limiter = Limiter( 
+    key_func=get_user_key, 
+    app=app, 
+    default_limits=["20 per second"] 
+)
 
 # --------------------------
 # Helpers

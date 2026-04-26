@@ -1014,8 +1014,8 @@ def payroll():
             """
             SELECT pr.PayrollID, pr.PeriodStart, pr.PeriodEnd,
                    COUNT(DISTINCT p.EmployeeID) AS num_employees,
-                   COALESCE(SUM(p.Amount), 0) AS total_gross,
-                   COALESCE(SUM(p.Amount - p.Deduction), 0) AS total_net
+                   SUM(p.Amount) AS total_gross,
+                   SUM(p.Amount - p.Deduction) AS total_net
             FROM Payroll pr
             LEFT JOIN Payment p ON p.PayrollID = pr.PayrollID
             WHERE pr.CompanyID = %s
@@ -1025,6 +1025,9 @@ def payroll():
             (company_id,),
         )
         payrolls = cur.fetchall()
+        for p in payrolls:
+            p["total_gross"] = p["total_gross"] or 0
+            p["total_net"] = p["total_net"] or 0
 
     return render_template("payroll.html", payrolls=payrolls)
 

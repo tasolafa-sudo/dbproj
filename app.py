@@ -888,6 +888,38 @@ def edit_assignment(schedule_id):
     flash("Assignment updated.", "success")
     return redirect(url_for("assignments"))
 
+@app.route("/assignments/add", methods=["POST"])
+@login_required
+def add_assignment():
+    company_id = session["company_id"]
+
+    employee_id = request.form.get("employee_id")
+    site_id = request.form.get("site_id")
+    start_date = safe_date(request.form.get("start_date"))
+    end_date = safe_date(request.form.get("end_date"))
+
+    if is_invalid_date_range(start_date, end_date):
+        flash("End date cannot be before start date.", "danger")
+        return redirect(url_for("assignments"))
+
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO Schedule (SiteID, EmployeeID, StartDate, EndDate)
+            SELECT %s, %s, %s, %s
+            WHERE EXISTS (
+                SELECT 1
+                FROM Job_site js
+                JOIN Project p ON p.ProjectID = js.ProjectID
+                WHERE js.SiteID = %s
+                  AND p.CompanyID = %s
+            )
+            """,
+            (site_id, employee_id, start_date, end_date, site_id, company_id),
+        )
+
+    flash("Assignment created.", "success")
+    return redirect(url_for("assignments"))
 
 # --------------------------
 # Timecards

@@ -3,3 +3,4 @@ python-dotenv
 mysql-connector-python
 Werkzeug
 gunicorn
+flask-limiter

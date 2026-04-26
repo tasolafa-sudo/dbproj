@@ -868,7 +868,7 @@ def edit_assignment(schedule_id):
             """
             UPDATE Schedule
             SET SiteID=%s, StartDate=%s, EndDate=%s
-            WHERE ScheduleID=%s
+            WHERE ScheduleID=%s AND EmployeeID=%s
               AND SiteID IN (
                 SELECT js.SiteID FROM Job_site js
                 JOIN Project p ON p.ProjectID = js.ProjectID

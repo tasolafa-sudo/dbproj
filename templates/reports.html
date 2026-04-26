@@ -24,8 +24,7 @@
   <div class="table-header-row">
     <h2 class="section-title">{{ report_type.replace('_',' ').title() }}</h2>
     {% if rows %}
-    <a class="pixel-btn secondary small-btn" href="{{ url_for('export_report', type=report_type, start_date=start_date, end_date=end_date, employee_id=employee_id, site_id=site_id, hourly_rate=hourly_rate) }}">Export CSV</a>
-    {% endif %}
+    
   </div>
 
   {% if rows %}

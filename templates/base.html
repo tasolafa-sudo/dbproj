@@ -45,6 +45,7 @@
           {% else %}
           <a class="nav-btn {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a>
           <a class="nav-btn {% if request.endpoint == 'projects' %}active{% endif %}" href="{{ url_for('projects') }}">Projects</a>
+          <a class="nav-btn {% if request.endpoint == 'sites' %}active{% endif %}" href="{{ url_for('sites') }}">Sites</a>
           <a class="nav-btn {% if request.endpoint == 'employees' %}active{% endif %}" href="{{ url_for('employees') }}">Employees</a>
           <a class="nav-btn {% if request.endpoint == 'assignments' %}active{% endif %}" href="{{ url_for('assignments') }}">Assignments</a>
           <a class="nav-btn {% if request.endpoint == 'timecards' %}active{% endif %}" href="{{ url_for('timecards') }}">Timecards</a>

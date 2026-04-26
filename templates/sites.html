@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% block title %}BLUE | Sites{% endblock %}
+{% block content %}
+<div class="page-header-row split">
+  <h1 class="page-title">Job Sites</h1>
+  <button class="pixel-btn secondary" type="button" data-open-modal="add-site-modal">Add Site</button>
+</div>
+
+<section class="table-card">
+  <table class="data-table">
+    <thead>
+      <tr><th>Site ID</th><th>Project</th><th>Site Name</th><th>Location</th><th>Details</th></tr>
+    </thead>
+    <tbody>
+      {% for site in sites %}
+      <tr>
+        <td>{{ site.SiteID }}</td>
+        <td>{{ site.ProjectID }}</td>
+        <td>{{ site.SiteName }}</td>
+        <td>{{ site.Location }}</td>
+        <td><button type="button" class="table-link" data-open-modal="site-{{ site.SiteID }}">Details</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<div class="modal" id="add-site-modal">
+  <div class="modal-panel hero-blue">
+    <button class="modal-close" data-close-modal>&times;</button>
+    <h2 class="section-title center">Add Site</h2>
+    <form method="post" action="{{ url_for('add_site') }}" class="form-grid single">
+      <label><span>Project</span>
+        <select name="project_id">
+          {% for project in projects %}
+          <option value="{{ project.ProjectID }}">{{ project.ProjectID }}{% if project.ProjectName %} — {{ project.ProjectName }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>Site Name</span><input type="text" name="site_name" required></label>
+      <label><span>Location</span><input type="text" name="location" required></label>
+      <button class="pixel-btn primary wide" type="submit">Add</button>
+    </form>
+  </div>
+</div>
+
+{% for site in sites %}
+<div class="modal" id="site-{{ site.SiteID }}">
+  <div class="modal-panel hero-blue">
+    <button class="modal-close" data-close-modal>&times;</button>
+    <h2 class="section-title center">Edit Job Site</h2>
+    <form method="post" action="{{ url_for('edit_site', site_id=site.SiteID) }}" class="form-grid single">
+      <label><span>Project</span>
+        <select name="project_id">
+          {% for project in projects %}
+          <option value="{{ project.ProjectID }}" {% if project.ProjectID == site.ProjectID %}selected{% endif %}>{{ project.ProjectID }}{% if project.ProjectName %} — {{ project.ProjectName }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><span>Site Name</span><input type="text" name="site_name" value="{{ site.SiteName }}" required></label>
+      <label><span>Location</span><input type="text" name="location" value="{{ site.Location }}" required></label>
+      <button type="submit" class="pixel-btn primary wide">Save</button>
+    </form>
+    <form method="post" action="{{ url_for('delete_site', site_id=site.SiteID) }}" onsubmit="return confirm('Delete this site?');">
+      <button type="submit" class="pixel-btn danger wide">Delete</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}

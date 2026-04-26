@@ -729,6 +729,30 @@ def delete_project(project_id):
     return redirect(url_for("projects"))
 
 
+@app.route("/sites")
+@login_required
+def sites():
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT js.SiteID, js.ProjectID, js.SiteName, js.Location
+            FROM Job_site js
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE p.CompanyID = %s
+            ORDER BY js.SiteName
+            """,
+            (company_id,),
+        )
+        all_sites = cur.fetchall()
+        cur.execute(
+            "SELECT ProjectID, ProjectName FROM Project WHERE CompanyID=%s ORDER BY ProjectID",
+            (company_id,),
+        )
+        projects = cur.fetchall()
+    return render_template("sites.html", sites=all_sites, projects=projects)
+
+
 @app.route("/sites/add", methods=["POST"])
 @login_required
 def add_site():
@@ -749,7 +773,7 @@ def add_site():
         cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Job site added.", "success")
-    return redirect(url_for("projects"))
+    return redirect(url_for("sites"))
 
 
 @app.route("/sites/<site_id>/edit", methods=["POST"])
@@ -779,7 +803,7 @@ def edit_site(site_id):
             ),
         )
     flash("Job site updated.", "success")
-    return redirect(url_for("projects"))
+    return redirect(url_for("sites"))
 
 
 @app.route("/sites/<site_id>/delete", methods=["POST"])
@@ -792,7 +816,7 @@ def delete_site(site_id):
             (site_id, company_id),
         )
     flash("Job site deleted.", "info")
-    return redirect(url_for("projects"))
+    return redirect(url_for("sites"))
 
 
 # --------------------------

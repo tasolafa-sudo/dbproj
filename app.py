@@ -510,23 +510,20 @@ def dashboard():
             """
             SELECT COUNT(*) AS total
             FROM Timecard tc
+            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
             JOIN Employee e ON e.EmployeeID = tc.EmployeeID
             WHERE e.CompanyID=%s
+              AND s.StartDate <= CURDATE() AND s.EndDate >= CURDATE()
             """,
             (company_id,),
         )
-        total_timecards = cur.fetchone()["total"]
+        active_timecards = cur.fetchone()["total"]
 
         cur.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM Payment p
-            JOIN Payroll pr ON pr.PayrollID = p.PayrollID
-            WHERE pr.CompanyID=%s
-            """,
+            "SELECT COUNT(*) AS total FROM Project WHERE CompanyID=%s AND Status=TRUE",
             (company_id,),
         )
-        total_payments = cur.fetchone()["total"]
+        active_projects = cur.fetchone()["total"]
 
         cur.execute(
             "SELECT PayrollID, PeriodStart, PeriodEnd FROM Payroll WHERE CompanyID=%s ORDER BY PeriodEnd DESC LIMIT 1",
@@ -542,8 +539,8 @@ def dashboard():
     return render_template(
         "dashboard.html",
         active_employees=active_employees,
-        total_timecards=total_timecards,
-        total_payments=total_payments,
+        active_timecards=active_timecards,
+        active_projects=active_projects,
         latest_payroll=latest_payroll,
         trades=trades,
         unions=unions,

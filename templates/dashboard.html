@@ -7,8 +7,8 @@
 
 <section class="stats-row">
   <div class="stat-card"><span>Active Employees</span><strong>{{ active_employees }}</strong></div>
-  <div class="stat-card"><span>Timecards</span><strong>{{ total_timecards }}</strong></div>
-  <div class="stat-card"><span>Payments</span><strong>{{ total_payments }}</strong></div>
+  <div class="stat-card"><span>Active Timecards</span><strong>{{ active_timecards }}</strong></div>
+  <div class="stat-card"><span>Active Projects</span><strong>{{ active_projects }}</strong></div>
   <div class="stat-card"><span>Next Payday</span><strong>{% if latest_payroll %}{{ latest_payroll.PeriodEnd }}{% else %}N/A{% endif %}</strong></div>
 </section>
 

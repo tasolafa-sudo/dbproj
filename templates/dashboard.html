@@ -40,6 +40,7 @@
     <button class="modal-close" data-close-modal>&times;</button>
     <h2 class="section-title center">Add Project</h2>
     <form method="post" action="{{ url_for('add_project') }}" class="form-grid single">
+      <label><span>Project Name</span><input type="text" name="project_name" required></label>
       <label><span>Status</span><select name="status"><option value="1">Active</option><option value="0">Completed</option></select></label>
       <button type="submit" class="pixel-btn primary wide">Add</button>
     </form>

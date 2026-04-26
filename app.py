@@ -866,14 +866,15 @@ def edit_assignment(schedule_id):
     with get_cursor() as cur:
         cur.execute(
             """
-            UPDATE Schedule
-            SET SiteID=%s, StartDate=%s, EndDate=%s
-            WHERE ScheduleID=%s AND EmployeeID=%s
-              AND SiteID IN (
-                SELECT js.SiteID FROM Job_site js
+            UPDATE Schedule s
+            JOIN Timecard tc ON tc.ScheduleID = s.ScheduleID
+            SET s.SiteID=%s, s.StartDate=%s,s.EndDate=%s
+            WHERE s.ScheduleID=%s AND tc.EmployeeID=%s AND s.SiteID IN (
+                SELECT js.SiteID
+                FROM Job_site js
                 JOIN Project p ON p.ProjectID = js.ProjectID
                 WHERE p.CompanyID = %s
-              )
+            )
             """,
             (
                 request.form.get("site_id"),

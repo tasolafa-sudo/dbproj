@@ -753,57 +753,67 @@ def assignments():
     company_id = session["company_id"]
     with get_cursor() as cur:
         cur.execute(
-            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
+            """
+            SELECT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
+                   s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
+                   s.StartDate, s.EndDate, p.Status AS ProjectStatus
+            FROM Schedule s
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            JOIN Employee e ON e.EmployeeID = s.EmployeeID
+            JOIN Trade t ON t.TradeID = e.TradeID
+            WHERE p.CompanyID = %s
+            ORDER BY e.Name, s.StartDate
+            """,
             (company_id,),
         )
-        employees = cur.fetchall()
+        assignments = cur.fetchall()
 
-    with get_cursor() as cur:
         cur.execute(
             "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
             (company_id,),
         )
         sites = cur.fetchall()
 
-    with get_cursor() as cur:
-        cur.execute("CALL GetAssignments(%s)", (company_id,))
-        assignments = cur.fetchall()
+        cur.execute(
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s AND Active=TRUE ORDER BY Name",
+            (company_id,),
+        )
+        employees = cur.fetchall()
 
-    return render_template("assignments.html", assignments=assignments, sites=sites, employees=employees)
+    return render_template("assignments.html", assignments=assignments, sites=sites)
 
 
-@app.route("/assignments/<schedule_id>/edit", methods=["POST"])
+@app.route("/assignments/add", methods=["POST"])
 @login_required
-def edit_assignment(schedule_id):
+def add_assignment():
     company_id = session["company_id"]
+
+    employee_id = request.form.get("employee_id")
+    site_id = request.form.get("site_id")
     start_date = safe_date(request.form.get("start_date"))
     end_date = safe_date(request.form.get("end_date"))
+
     if is_invalid_date_range(start_date, end_date):
         flash("End date cannot be before start date.", "danger")
         return redirect(url_for("assignments"))
-    with get_cursor() as cur:
+
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+
+        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
+
         cur.execute(
             """
-            UPDATE Schedule s
-            JOIN Timecard tc ON tc.ScheduleID = s.ScheduleID
-            SET s.SiteID=%s, s.StartDate=%s,s.EndDate=%s
-            WHERE s.ScheduleID=%s AND tc.EmployeeID=%s AND s.SiteID IN (
-                SELECT js.SiteID
-                FROM Job_site js
-                JOIN Project p ON p.ProjectID = js.ProjectID
-                WHERE p.CompanyID = %s
-            )
+            INSERT INTO Schedule (ScheduleID, SiteID, EmployeeID, StartDate, EndDate)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (
-                request.form.get("site_id"),
-                start_date,
-                end_date,
-                schedule_id,
-                request.form.get("employee_id"),
-                company_id,
-            ),
+            (schedule_id, site_id, employee_id, start_date, end_date),
         )
-    flash("Assignment updated.", "success")
+
+        cur.close()
+
+    flash("Assignment created.", "success")
     return redirect(url_for("assignments"))
 
 @app.route("/assignments/add", methods=["POST"])

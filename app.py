@@ -22,7 +22,6 @@ from migrations import (
 
 load_dotenv()
 
-# Admin password is hashed once at startup so the plaintext is never compared directly.
 _ADMIN_PASSWORD_HASH = generate_password_hash(os.getenv("ADMIN_PASSWORD", "owner123"))
 
 app = Flask(__name__)
@@ -72,7 +71,6 @@ def ensure_password_column_size():
                 cur.execute("ALTER TABLE User_tbl MODIFY Password VARCHAR(255) NOT NULL")
             cur.close()
     except Exception as exc:
-        # App can still run if DB user lacks ALTER privileges.
         app.logger.warning("Could not verify/upgrade User_tbl.Password column: %s", exc)
 
 
@@ -107,7 +105,6 @@ _migrations_run = False
 
 @app.before_request
 def _ensure_password_column_once():
-    # Run after the server is up so import-time DB access cannot block Gunicorn boot.
     if request.path == "/health":
         return
     global _password_column_checked, _company_auth_table_checked, _migrations_run
@@ -289,9 +286,7 @@ def authenticate_user(username, password):
         return None
 
     stored = user["Password"]
-    # All passwords are stored as werkzeug hashes (pbkdf2/scrypt). Plaintext is never accepted.
-    # werkzeug's check_password_hash hashes the input and compares — passwords are never
-    # compared in the clear, and the stored hash cannot be reversed to recover the original.
+
     valid = check_password_hash(stored, password)
     return user if valid else None
 
@@ -1224,7 +1219,6 @@ def change_password():
 
     new_hash = generate_password_hash(new_password)
     with get_cursor() as cur:
-        # Prepared statement — user_id from session, new hash as parameter, never raw input in SQL.
         cur.execute(
             "UPDATE User_tbl SET Password=%s WHERE UserID=%s",
             (new_hash, session["user_id"]),
@@ -1235,7 +1229,6 @@ def change_password():
 
 @app.errorhandler(Exception)
 def handle_error(exc):
-    # Log the full error server-side but never expose DB internals or stack traces to the user.
     app.logger.error("Unhandled exception: %s", exc, exc_info=True)
     return render_template("error.html"), 500
 

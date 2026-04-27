@@ -3,7 +3,6 @@ import io
 import os
 from datetime import datetime
 from functools import wraps
-from typing import Any
 
 from dotenv import load_dotenv
 from flask import Flask, Response, flash, g, redirect, render_template, request, session, url_for
@@ -13,7 +12,12 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import warnings
 from db import get_conn, get_cursor
-from migrations import ensure_db_constraints, ensure_db_functions, ensure_project_name_column
+from migrations import (
+    ensure_db_constraints,
+    ensure_db_functions,
+    ensure_db_procedures,
+    ensure_project_name_column,
+)
 
 load_dotenv()
 
@@ -117,6 +121,7 @@ def _ensure_password_column_once():
         ensure_project_name_column()
         ensure_db_functions()
         ensure_db_constraints()
+        ensure_db_procedures()
 
 
 def login_required(view):
@@ -221,44 +226,24 @@ def fetch_report_rows(cur, company_id, report_type, start_date, end_date, employ
         return cur.fetchall()
 
     if report_type == "employee_hours":
-        sql = """
-            SELECT e.EmployeeID, e.Name, t.TradeName, SUM(tc.Hours) AS TotalHours,
-                   COUNT(DISTINCT s.SiteID) AS NumSites
-            FROM Timecard tc
-            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-            JOIN Trade t ON t.TradeID = e.TradeID
-            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
-            WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
-        """
-        params: list[Any] = [company_id, start_date, end_date]
-        if employee_id:
-            sql += " AND e.EmployeeID = %s"
-            params.append(employee_id)
-        sql += " GROUP BY e.EmployeeID, e.Name, t.TradeName ORDER BY e.Name"
-        cur.execute(sql, tuple(params))
+        cur.execute(
+            "CALL GetReports(%s, %s, %s, %s)",
+            (company_id, start_date, end_date, employee_id if employee_id else None),
+        )
         return cur.fetchall()
 
     if report_type == "pay_by_site" or default_to_pay_by_site:
-        sql = """
-            SELECT e.EmployeeID, e.Name, js.SiteName, p.ProjectID,
-                   SUM(tc.Hours) AS Hours,
-                   ROUND(SUM(tc.Hours) * %s, 2) AS TotalLaborCost
-            FROM Timecard tc
-            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
-            JOIN Job_site js ON js.SiteID = s.SiteID
-            JOIN Project p ON p.ProjectID = js.ProjectID
-            WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
-        """
-        params: list[Any] = [hourly_rate, company_id, start_date, end_date]
-        if employee_id:
-            sql += " AND e.EmployeeID = %s"
-            params.append(employee_id)
-        if site_id:
-            sql += " AND js.SiteID = %s"
-            params.append(site_id)
-        sql += " GROUP BY e.EmployeeID, e.Name, js.SiteName, p.ProjectID ORDER BY e.Name, js.SiteName"
-        cur.execute(sql, tuple(params))
+        cur.execute(
+            "CALL generate_report(%s, %s, %s, %s, %s, %s)",
+            (
+                company_id,
+                start_date,
+                end_date,
+                employee_id if employee_id else None,
+                site_id if site_id else None,
+                hourly_rate,
+            ),
+        )
         return cur.fetchall()
 
     return []
@@ -266,15 +251,7 @@ def fetch_report_rows(cur, company_id, report_type, start_date, end_date, employ
 
 def authenticate_user(username, password):
     with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT u.UserID, u.CompanyID, u.Username, u.Password, c.CompanyName
-            FROM User_tbl u
-            JOIN Company c ON c.CompanyID = u.CompanyID
-            WHERE u.Username = %s
-            """,
-            (username,),
-        )
+        cur.execute("CALL login(%s)", (username,))
         user = cur.fetchone()
 
     if not user:
@@ -365,15 +342,11 @@ def register():
 
             user_id = next_id(cur, "User_tbl", "UserID", "USR", 3)
             hashed = generate_password_hash(password)
-            # Password column in provided schema is VARCHAR(50). Hashed passwords need a larger column.
+            cur.execute("UNLOCK TABLES")
             cur.execute(
-                """
-                INSERT INTO User_tbl (UserID, CompanyID, Username, Password)
-                VALUES (%s, %s, %s, %s)
-                """,
+                "CALL create_account(%s, %s, %s, %s)",
                 (user_id, company_id, username, hashed),
             )
-            cur.execute("UNLOCK TABLES")
             cur.close()
 
         flash("Account created. Please log in.", "success")
@@ -503,34 +476,23 @@ def admin_delete_company(company_id):
 def dashboard():
     company_id = session["company_id"]
     with get_cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS total FROM Employee WHERE CompanyID=%s AND Active=TRUE", (company_id,))
-        active_employees = cur.fetchone()["total"]
+        cur.execute("CALL ActiveEmployees(%s)", (company_id,))
+        active_employees = cur.fetchone()["cnt"]
 
-        cur.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM Timecard tc
-            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
-            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-            WHERE e.CompanyID=%s
-              AND s.StartDate <= CURDATE() AND s.EndDate >= CURDATE()
-            """,
-            (company_id,),
-        )
-        active_timecards = cur.fetchone()["total"]
+    with get_cursor() as cur:
+        cur.execute("CALL ActiveTimecards(%s)", (company_id,))
+        active_timecards = cur.fetchone()["cnt"]
 
-        cur.execute(
-            "SELECT COUNT(*) AS total FROM Project WHERE CompanyID=%s AND Status=TRUE",
-            (company_id,),
-        )
-        active_projects = cur.fetchone()["total"]
+    with get_cursor() as cur:
+        cur.execute("CALL ActiveProjects(%s)", (company_id,))
+        active_projects = cur.fetchone()["cnt"]
 
+    with get_cursor() as cur:
         cur.execute(
             "SELECT PayrollID, PeriodStart, PeriodEnd FROM Payroll WHERE CompanyID=%s ORDER BY PeriodEnd DESC LIMIT 1",
             (company_id,),
         )
         latest_payroll = cur.fetchone()
-
         cur.execute("SELECT TradeID, TradeName FROM Trade ORDER BY TradeName")
         trades = cur.fetchall()
         cur.execute("SELECT UnionID, UnionName FROM Union_tbl ORDER BY UnionName")
@@ -557,29 +519,15 @@ def employees():
     search = request.args.get("search", "").strip()
     active = request.args.get("active", "")
 
-    sql = """
-        SELECT e.EmployeeID, e.Name, e.Active, e.UnionID, e.TradeID, t.TradeName,
-               u.UnionName
-        FROM Employee e
-        JOIN Trade t ON e.TradeID = t.TradeID
-        LEFT JOIN Union_tbl u ON e.UnionID = u.UnionID
-        WHERE e.CompanyID = %s
-    """
-    params: list[Any] = [company_id]
-    if search:
-        sql += " AND e.Name LIKE %s"
-        params.append(f"%{search}%")
-    if active in {"0", "1"}:
-        sql += " AND e.Active = %s"
-        params.append(int(active))
-    sql += " ORDER BY e.Name"
+    search_param = search if search else None
+    active_param = int(active) if active in {"0", "1"} else None
 
     with get_cursor() as cur:
         cur.execute("SELECT TradeID, TradeName FROM Trade ORDER BY TradeName")
         trades = cur.fetchall()
         cur.execute("SELECT UnionID, UnionName FROM Union_tbl ORDER BY UnionName")
         unions = cur.fetchall()
-        cur.execute(sql, tuple(params))
+        cur.execute("CALL GetEmployees(%s, %s, %s)", (company_id, search_param, active_param))
         employees = cur.fetchall()
 
     return render_template("employees.html", employees=employees, trades=trades, unions=unions)
@@ -592,11 +540,9 @@ def add_employee():
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         employee_id = next_id(cur, "Employee", "EmployeeID", "E", 5)
+        cur.execute("UNLOCK TABLES")
         cur.execute(
-            """
-            INSERT INTO Employee (EmployeeID, CompanyID, UnionID, TradeID, Name, Active)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
+            "CALL add_employee(%s, %s, %s, %s, %s, %s)",
             (
                 employee_id,
                 company_id,
@@ -606,7 +552,6 @@ def add_employee():
                 to_bool(request.form.get("active")),
             ),
         )
-        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Employee added.", "success")
     return redirect(url_for("employees"))
@@ -617,19 +562,18 @@ def add_employee():
 def edit_employee(employee_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
+        cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
+        if not cur.fetchone():
+            flash("Employee not found.", "danger")
+            return redirect(url_for("employees"))
         cur.execute(
-            """
-            UPDATE Employee
-            SET Name=%s, UnionID=%s, TradeID=%s, Active=%s
-            WHERE EmployeeID=%s AND CompanyID=%s
-            """,
+            "CALL edit_employee(%s, %s, %s, %s, %s)",
             (
+                employee_id,
                 request.form.get("name"),
                 request.form.get("union_id") or None,
                 request.form.get("trade_id"),
                 to_bool(request.form.get("active")),
-                employee_id,
-                company_id,
             ),
         )
     flash("Employee updated.", "success")
@@ -641,7 +585,11 @@ def edit_employee(employee_id):
 def delete_employee(employee_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
-        cur.execute("DELETE FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
+        cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
+        if not cur.fetchone():
+            flash("Employee not found.", "danger")
+            return redirect(url_for("employees"))
+        cur.execute("CALL delete_employee(%s)", (employee_id,))
     flash("Employee deleted.", "info")
     return redirect(url_for("employees"))
 
@@ -656,37 +604,14 @@ def projects():
     status = request.args.get("status", "")
     search = request.args.get("search", "").strip()
 
-    sql = """
-        SELECT p.ProjectID, p.ProjectName, p.Status, COUNT(js.SiteID) AS SiteCount
-        FROM Project p
-        LEFT JOIN Job_site js ON js.ProjectID = p.ProjectID
-        WHERE p.CompanyID = %s
-    """
-    params: list[Any] = [company_id]
-    if status in {"0", "1"}:
-        sql += " AND p.Status = %s"
-        params.append(int(status))
-    if search:
-        sql += " AND (p.ProjectName LIKE %s OR p.ProjectID LIKE %s)"
-        params.extend([f"%{search}%", f"%{search}%"])
-    sql += " GROUP BY p.ProjectID, p.ProjectName, p.Status ORDER BY p.ProjectID"
+    search_param = search if search else None
+    status_param = int(status) if status in {"0", "1"} else None
 
     with get_cursor() as cur:
-        cur.execute(sql, tuple(params))
+        cur.execute("CALL DisplayProjects(%s, %s, %s)", (company_id, search_param, status_param))
         projects = cur.fetchall()
-        cur.execute(
-            """
-            SELECT js.SiteID, js.ProjectID, js.SiteName, js.Location
-            FROM Job_site js
-            JOIN Project p ON p.ProjectID = js.ProjectID
-            WHERE p.CompanyID = %s
-            ORDER BY js.SiteName
-            """,
-            (company_id,),
-        )
-        sites = cur.fetchall()
 
-    return render_template("projects.html", projects=projects, sites=sites, search=search)
+    return render_template("projects.html", projects=projects, search=search)
 
 
 @app.route("/projects/add", methods=["POST"])
@@ -696,11 +621,11 @@ def add_project():
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         project_id = next_id(cur, "Project", "ProjectID", "P", 5)
+        cur.execute("UNLOCK TABLES")
         cur.execute(
-            "INSERT INTO Project (ProjectID, CompanyID, ProjectName, Status) VALUES (%s, %s, %s, %s)",
+            "CALL add_project(%s, %s, %s, %s)",
             (project_id, company_id, request.form.get("project_name", "").strip(), to_bool(request.form.get("status"))),
         )
-        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Project added.", "success")
     return redirect(url_for("projects"))
@@ -711,9 +636,13 @@ def add_project():
 def edit_project(project_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
+        cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
+        if not cur.fetchone():
+            flash("Project not found.", "danger")
+            return redirect(url_for("projects"))
         cur.execute(
-            "UPDATE Project SET ProjectName=%s, Status=%s WHERE ProjectID=%s AND CompanyID=%s",
-            (request.form.get("project_name", "").strip(), to_bool(request.form.get("status")), project_id, company_id),
+            "CALL sp_edit_project(%s, %s, %s)",
+            (project_id, to_bool(request.form.get("status")), request.form.get("project_name", "").strip()),
         )
     flash("Project updated.", "success")
     return redirect(url_for("projects"))
@@ -724,7 +653,11 @@ def edit_project(project_id):
 def delete_project(project_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
-        cur.execute("DELETE FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
+        cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
+        if not cur.fetchone():
+            flash("Project not found.", "danger")
+            return redirect(url_for("projects"))
+        cur.execute("CALL delete_project(%s)", (project_id,))
     flash("Project deleted.", "info")
     return redirect(url_for("projects"))
 
@@ -780,27 +713,19 @@ def add_site():
 @login_required
 def edit_site(site_id):
     company_id = session["company_id"]
+    new_project_id = request.form.get("project_id")
     with get_cursor() as cur:
-        cur.execute(
-            "SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s",
-            (request.form.get("project_id"), company_id),
-        )
+        cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (new_project_id, company_id))
         if not cur.fetchone():
             flash("Invalid project for this company.", "danger")
-            return redirect(url_for("projects"))
+            return redirect(url_for("sites"))
+        cur.execute("SELECT 1 FROM Job_site WHERE SiteID=%s AND ProjectID IN (SELECT ProjectID FROM Project WHERE CompanyID=%s)", (site_id, company_id))
+        if not cur.fetchone():
+            flash("Site not found.", "danger")
+            return redirect(url_for("sites"))
         cur.execute(
-            """
-            UPDATE Job_site
-            SET ProjectID=%s, SiteName=%s, Location=%s
-            WHERE SiteID=%s AND ProjectID IN (SELECT ProjectID FROM Project WHERE CompanyID=%s)
-            """,
-            (
-                request.form.get("project_id"),
-                request.form.get("site_name"),
-                request.form.get("location"),
-                site_id,
-                company_id,
-            ),
+            "CALL edit_job_site(%s, %s, %s, %s)",
+            (site_id, new_project_id, request.form.get("site_name"), request.form.get("location")),
         )
     flash("Job site updated.", "success")
     return redirect(url_for("sites"))
@@ -827,24 +752,10 @@ def delete_site(site_id):
 def assignments():
     company_id = session["company_id"]
     with get_cursor() as cur:
-        cur.execute(
-            """
-            SELECT DISTINCT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
-                   s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
-                   s.StartDate, s.EndDate, p.Status AS ProjectStatus
-            FROM Timecard tc
-            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-            JOIN Trade t ON t.TradeID = e.TradeID
-            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
-            JOIN Job_site js ON js.SiteID = s.SiteID
-            JOIN Project p ON p.ProjectID = js.ProjectID
-            WHERE e.CompanyID = %s
-            ORDER BY e.Name, s.StartDate
-            """,
-            (company_id,),
-        )
+        cur.execute("CALL GetAssignments(%s)", (company_id,))
         assignments = cur.fetchall()
 
+    with get_cursor() as cur:
         cur.execute(
             "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
             (company_id,),
@@ -887,6 +798,28 @@ def edit_assignment(schedule_id):
     return redirect(url_for("assignments"))
 
 
+@app.route("/assignments/<schedule_id>/delete", methods=["POST"])
+@login_required
+def delete_assignment(schedule_id):
+    company_id = session["company_id"]
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM Schedule s
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE s.ScheduleID = %s AND p.CompanyID = %s
+            """,
+            (schedule_id, company_id),
+        )
+        if not cur.fetchone():
+            flash("Assignment not found.", "danger")
+            return redirect(url_for("assignments"))
+        cur.execute("CALL delete_assignment(%s)", (schedule_id,))
+    flash("Assignment deleted.", "info")
+    return redirect(url_for("assignments"))
+
+
 # --------------------------
 # Timecards
 # --------------------------
@@ -897,24 +830,8 @@ def timecards():
     employee_id = request.args.get("employee_id", "").strip()
     work_date = request.args.get("date", "").strip()
 
-    sql = """
-        SELECT tc.TimecardID, tc.ScheduleID, tc.EmployeeID, tc.Date, tc.Hours,
-               e.Name AS EmployeeName, js.SiteName, p.ProjectID
-        FROM Timecard tc
-        JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-        JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
-        JOIN Job_site js ON js.SiteID = s.SiteID
-        JOIN Project p ON p.ProjectID = js.ProjectID
-        WHERE e.CompanyID = %s
-    """
-    params: list[Any] = [company_id]
-    if employee_id:
-        sql += " AND tc.EmployeeID = %s"
-        params.append(employee_id)
-    if work_date:
-        sql += " AND tc.Date = %s"
-        params.append(work_date)
-    sql += " ORDER BY tc.Date DESC, e.Name"
+    employee_id_param = employee_id if employee_id else None
+    date_param = safe_date(work_date) if work_date else None
 
     with get_cursor() as cur:
         cur.execute("SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name", (company_id,))
@@ -931,7 +848,7 @@ def timecards():
             (company_id,),
         )
         schedules = cur.fetchall()
-        cur.execute(sql, tuple(params))
+        cur.execute("CALL GetTimecards(%s, %s, %s)", (company_id, employee_id_param, date_param))
         timecards = cur.fetchall()
 
     return render_template(
@@ -955,11 +872,9 @@ def add_timecard():
             flash("Invalid employee for this company.", "danger")
             return redirect(url_for("timecards"))
         timecard_id = next_id(cur, "Timecard", "TimecardID", "TC", 4)
+        cur.execute("UNLOCK TABLES")
         cur.execute(
-            """
-            INSERT INTO Timecard (TimecardID, ScheduleID, EmployeeID, Date, Hours)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
+            "CALL add_timecard(%s, %s, %s, %s, %s)",
             (
                 timecard_id,
                 request.form.get("schedule_id"),
@@ -968,7 +883,6 @@ def add_timecard():
                 float(request.form.get("hours")),
             ),
         )
-        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Timecard added.", "success")
     return redirect(url_for("timecards"))
@@ -1005,9 +919,13 @@ def delete_timecard(timecard_id):
     company_id = session["company_id"]
     with get_cursor() as cur:
         cur.execute(
-            "DELETE FROM Timecard WHERE TimecardID=%s AND EmployeeID IN (SELECT EmployeeID FROM Employee WHERE CompanyID=%s)",
+            "SELECT 1 FROM Timecard tc JOIN Employee e ON e.EmployeeID = tc.EmployeeID WHERE tc.TimecardID=%s AND e.CompanyID=%s",
             (timecard_id, company_id),
         )
+        if not cur.fetchone():
+            flash("Timecard not found.", "danger")
+            return redirect(url_for("timecards"))
+        cur.execute("CALL delete_timecard(%s)", (timecard_id,))
     flash("Timecard deleted.", "info")
     return redirect(url_for("timecards"))
 
@@ -1027,7 +945,6 @@ def payroll():
             flash("End date cannot be before start date.", "danger")
             return redirect(url_for("payroll"))
         hourly_rate = float(request.form.get("hourly_rate") or 40.0)
-        deduction = float(request.form.get("deduction") or 0.0)
 
         with get_conn() as conn:
             cur = conn.cursor(dictionary=True)
@@ -1037,51 +954,34 @@ def payroll():
                 (payroll_id, company_id, start_date, end_date),
             )
             cur.execute("UNLOCK TABLES")
-
             cur.execute(
-                """
-                SELECT tc.EmployeeID, ROUND(SUM(tc.Hours) * %s, 2) AS amount
-                FROM Timecard tc
-                JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-                WHERE e.CompanyID = %s AND tc.Date BETWEEN %s AND %s
-                GROUP BY tc.EmployeeID
-                """,
-                (hourly_rate, company_id, start_date, end_date),
+                "CALL run_payroll(%s, %s, %s, %s, %s)",
+                (payroll_id, company_id, start_date, end_date, hourly_rate),
             )
-            rows = cur.fetchall()
-
-            for row in rows:
-                payment_id = next_id(cur, "Payment", "PaymentID", "PM", 4)
-                cur.execute(
-                    "INSERT INTO Payment (PaymentID, PayrollID, EmployeeID, Amount, Deduction) VALUES (%s, %s, %s, %s, %s)",
-                    (payment_id, payroll_id, row["EmployeeID"], row["amount"], deduction),
-                )
-                cur.execute("UNLOCK TABLES")
             cur.close()
         flash("Payroll run completed.", "success")
         return redirect(url_for("payroll"))
 
+    filter_start = safe_date(request.args.get("filter_start"))
+    filter_end = safe_date(request.args.get("filter_end"))
+
     with get_cursor() as cur:
         cur.execute(
-            """
-            SELECT pr.PayrollID, pr.PeriodStart, pr.PeriodEnd,
-                   COUNT(DISTINCT p.EmployeeID) AS num_employees,
-                   SUM(p.Amount) AS total_gross,
-                   SUM(p.Amount - p.Deduction) AS total_net
-            FROM Payroll pr
-            LEFT JOIN Payment p ON p.PayrollID = pr.PayrollID
-            WHERE pr.CompanyID = %s
-            GROUP BY pr.PayrollID, pr.PeriodStart, pr.PeriodEnd
-            ORDER BY pr.PeriodEnd DESC
-            """,
-            (company_id,),
+            "CALL GetPayroll(%s, %s, %s)",
+            (company_id, filter_start or None, filter_end or None),
         )
         payrolls = cur.fetchall()
         for p in payrolls:
             p["total_gross"] = p["total_gross"] or 0
             p["total_net"] = p["total_net"] or 0
+            p["total_hours"] = p["total_hours"] or 0
 
-    return render_template("payroll.html", payrolls=payrolls)
+    return render_template(
+        "payroll.html",
+        payrolls=payrolls,
+        filter_start=filter_start or "",
+        filter_end=filter_end or "",
+    )
 
 
 # --------------------------

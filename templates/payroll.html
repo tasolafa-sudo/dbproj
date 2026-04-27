@@ -7,8 +7,16 @@
     <label><span>Pay Period Start</span><input type="date" name="start_date" required></label>
     <label><span>Pay Period End</span><input type="date" name="end_date" required></label>
     <label><span>Hourly Rate</span><input type="number" step="0.01" name="hourly_rate" value="40.00"></label>
-    <label><span>Deduction</span><input type="number" step="0.01" name="deduction" value="0.00"></label>
     <button class="pixel-btn primary" type="submit">Run Payroll</button>
+  </form>
+</section>
+
+<section class="toolbar-card">
+  <form method="get" class="toolbar-grid two-up">
+    <label><span>Filter Start</span><input type="date" name="filter_start" value="{{ filter_start }}"></label>
+    <label><span>Filter End</span><input type="date" name="filter_end" value="{{ filter_end }}"></label>
+    <button class="pixel-btn secondary" type="submit">Filter</button>
+    <a class="pixel-btn secondary" href="{{ url_for('payroll') }}">Clear</a>
   </form>
 </section>
 
@@ -18,6 +26,7 @@
     <div class="payroll-range">Pay Period: {{ payroll.PeriodStart }} — {{ payroll.PeriodEnd }}</div>
     <div class="payroll-grid">
       <div><span>Employees</span><strong>{{ payroll.num_employees }}</strong></div>
+      <div><span>Total Hours</span><strong>{{ payroll.total_hours }}</strong></div>
       <div><span>Total Gross</span><strong>{{ payroll.total_gross }}</strong></div>
       <div><span>Total Net</span><strong>{{ payroll.total_net }}</strong></div>
     </div>

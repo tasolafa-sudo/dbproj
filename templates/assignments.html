@@ -11,7 +11,7 @@
   <section class="assignment-card">
     <div class="assignment-head">{{ assignment.EmployeeName }} <span class="trade-tag">{{ assignment.TradeName }}</span></div>
     <table class="assignment-table">
-      <thead><tr><th>Job Site</th><th>Project</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Edit</th></tr></thead>
+      <thead><tr><th>Job Site</th><th>Project</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Edit</th><th>Delete</th></tr></thead>
       <tbody>
         <tr>
           <td>{{ assignment.SiteName }}</td>
@@ -20,6 +20,7 @@
           <td>{{ assignment.EndDate }}</td>
           <td>{{ 'Active' if assignment.ProjectStatus else 'Completed' }}</td>
           <td><button type="button" class="table-link" data-open-modal="assignment-{{ assignment.ScheduleID }}">Edit</button></td>
+          <td><form method="post" action="{{ url_for('delete_assignment', schedule_id=assignment.ScheduleID) }}" onsubmit="return confirm('Delete this assignment?');"><button type="submit" class="table-link danger">Delete</button></form></td>
         </tr>
       </tbody>
     </table>

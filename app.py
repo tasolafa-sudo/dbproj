@@ -851,7 +851,7 @@ def assignments():
         sites = cur.fetchall()
         
         cur.execute(
-            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s AND Active=TRUE ORDER BY Name",
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
             (company_id,),
         )
         employees = cur.fetchall()

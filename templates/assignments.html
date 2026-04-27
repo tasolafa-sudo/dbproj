@@ -73,9 +73,9 @@
       <label>
         <span>Employee</span>
         <select name="employee_id" required>
-          {% for assignment in assignments %}
-          <option value="{{ assignment.EmployeeID }}">
-            {{ assignment.EmployeeName }}
+          {% for employee in employees %}
+          <option value="{{ employee.EmployeeID }}">
+            {{ employee.Name }}
           </option>
           {% endfor %}
         </select>

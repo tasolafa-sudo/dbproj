@@ -227,6 +227,11 @@ def load_report_filters(cur, company_id):
 
 
 def fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate, default_to_pay_by_site=False):
+    start_date = start_date or None
+    end_date = end_date or None
+    employee_id = employee_id or None
+    site_id = site_id or None
+    
     if not (start_date and end_date):
         return []
 

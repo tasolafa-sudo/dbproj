@@ -816,52 +816,38 @@ def add_assignment():
     flash("Assignment created.", "success")
     return redirect(url_for("assignments"))
 
-@app.route("/assignments/add", methods=["POST"])
+@app.route("/assignments/<schedule_id>/edit", methods=["POST"])
 @login_required
-def add_assignment():
+def edit_assignment(schedule_id):
     company_id = session["company_id"]
-
-    employee_id = request.form.get("employee_id")
-    site_id = request.form.get("site_id")
     start_date = safe_date(request.form.get("start_date"))
     end_date = safe_date(request.form.get("end_date"))
-
     if is_invalid_date_range(start_date, end_date):
         flash("End date cannot be before start date.", "danger")
         return redirect(url_for("assignments"))
-
-    with get_conn() as conn:
-        cur = conn.cursor(dictionary=True)
-
+    with get_cursor() as cur:
         cur.execute(
             """
-            SELECT 1
-            FROM Job_site js
-            JOIN Project p ON p.ProjectID = js.ProjectID
-            WHERE js.SiteID = %s AND p.CompanyID = %s
+            UPDATE Schedule s
+            JOIN Timecard tc ON tc.ScheduleID = s.ScheduleID
+            SET s.SiteID=%s, s.StartDate=%s,s.EndDate=%s
+            WHERE s.ScheduleID=%s AND tc.EmployeeID=%s AND s.SiteID IN (
+                SELECT js.SiteID
+                FROM Job_site js
+                JOIN Project p ON p.ProjectID = js.ProjectID
+                WHERE p.CompanyID = %s
+            )
             """,
-            (site_id, company_id),
+            (
+                request.form.get("site_id"),
+                start_date,
+                end_date,
+                schedule_id,
+                request.form.get("employee_id"),
+                company_id,
+            ),
         )
-
-        if not cur.fetchone():
-            flash("Invalid site for this company.", "danger")
-            cur.close()
-            return redirect(url_for("assignments"))
-
-        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
-
-        cur.execute(
-            """
-            INSERT INTO Schedule (ScheduleID, SiteID, EmployeeID, StartDate, EndDate)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (schedule_id, site_id, employee_id, start_date, end_date),
-        )
-
-        conn.commit()
-        cur.close()
-
-    flash("Assignment created.", "success")
+    flash("Assignment updated.", "success")
     return redirect(url_for("assignments"))
 
 @app.route("/assignments/<schedule_id>/delete", methods=["POST"])

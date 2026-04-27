@@ -973,9 +973,10 @@ def timecards():
     with get_cursor() as cur:
         cur.execute("SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name", (company_id,))
         employees_list = cur.fetchall()
+
         cur.execute(
             """
-            SELECT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
+            SELECT DISTINCT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
             FROM Schedule s
             JOIN Job_site js ON js.SiteID = s.SiteID
             JOIN Project p ON p.ProjectID = js.ProjectID
@@ -985,6 +986,7 @@ def timecards():
             (company_id,),
         )
         schedules = cur.fetchall()
+
         cur.execute(sql, tuple(params))
         timecards = cur.fetchall()
 

@@ -930,6 +930,7 @@ def add_assignment():
             (schedule_id, site_id, employee_id, start_date, end_date),
         )
 
+        conn.commit()
         cur.close()
 
     flash("Assignment created.", "success")

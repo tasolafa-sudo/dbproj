@@ -3,6 +3,11 @@
 {% block content %}
 <div class="page-header-row split">
   <h1 class="page-title">Assignments</h1>
+  <button type="button"
+          class="pixel-btn primary small-btn"
+          data-open-modal="add-assignment">
+    + Add Assignment
+  </button>
 </div>
 
 <div class="assignment-stack">
@@ -56,4 +61,50 @@
   </div>
 </div>
 {% endfor %}
+<div class="modal" id="add-assignment">
+  <div class="modal-panel hero-blue">
+
+    <button class="modal-close" data-close-modal>&times;</button>
+
+    <h2 class="section-title center">Add Assignment</h2>
+
+    <form method="post" action="{{ url_for('add_assignment') }}" class="form-grid single">
+
+      <label>
+        <span>Employee</span>
+        <select name="employee_id" required>
+          {% for assignment in assignments %}
+          <option value="{{ assignment.EmployeeID }}">
+            {{ assignment.EmployeeName }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>Job Site</span>
+        <select name="site_id" required>
+          {% for site in sites %}
+          <option value="{{ site.SiteID }}">
+            {{ site.SiteName }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>Start Date</span>
+        <input type="date" name="start_date" required>
+      </label>
+
+      <label>
+        <span>End Date</span>
+        <input type="date" name="end_date" required>
+      </label>
+
+      <button type="submit" class="pixel-btn primary wide">Create</button>
+    </form>
+
+  </div>
+</div>
 {% endblock %}

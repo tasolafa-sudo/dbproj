@@ -829,16 +829,15 @@ def assignments():
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT DISTINCT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
+            SELECT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
                    s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
                    s.StartDate, s.EndDate, p.Status AS ProjectStatus
-            FROM Timecard tc
-            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
-            JOIN Trade t ON t.TradeID = e.TradeID
-            JOIN Schedule s ON s.ScheduleID = tc.ScheduleID
+            FROM Schedule s
             JOIN Job_site js ON js.SiteID = s.SiteID
             JOIN Project p ON p.ProjectID = js.ProjectID
-            WHERE e.CompanyID = %s
+            JOIN Employee e ON e.EmployeeID = s.EmployeeID
+            JOIN Trade t ON t.TradeID = e.TradeID
+            WHERE p.CompanyID = %s
             ORDER BY e.Name, s.StartDate
             """,
             (company_id,),

@@ -5,7 +5,6 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_project_name_column():
-    """Add ProjectName column to Project table if not present (supports Milestone 2 UI)."""
     try:
         with get_conn() as conn:
             cur = conn.cursor(dictionary=True)
@@ -28,7 +27,6 @@ def ensure_project_name_column():
 
 
 def ensure_db_functions():
-    """Create stored functions from the report (advanced PL/SQL) if they don't exist."""
     functions = [
         (
             "calc_gross_pay",
@@ -122,7 +120,6 @@ def ensure_db_functions():
 
 
 def ensure_db_constraints():
-    """Add CHECK constraints from the report if not already present."""
     constraints = [
         ("Timecard", "chk_timecard_hours", "Hours > 0 AND Hours <= 24"),
         ("Payment", "chk_payment_deduction", "Deduction >= 0 AND Deduction <= Amount"),
@@ -153,14 +150,7 @@ def ensure_db_constraints():
 
 
 def ensure_db_procedures():
-    """
-    Create all stored procedures from the report (with corrections for multi-tenant
-    scoping, optional filter params, and schema additions like ProjectName).
-    Uses DROP IF EXISTS + CREATE so definitions stay current on each restart.
-    """
     procedures = [
-        # --- Retrieve ---
-        # Correction: report filtered by plaintext password; removed — Python verifies hash.
         (
             "login",
             """
@@ -173,7 +163,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID, search, status filter, ProjectName, SiteCount.
         (
             "DisplayProjects",
             """
@@ -196,7 +185,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — returns sites for a specific project.
         (
             "DisplayProjectSiteSum",
             """
@@ -208,7 +196,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID, search, active filter.
         (
             "GetEmployees",
             """
@@ -230,7 +217,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID; used DISTINCT to prevent duplicate rows from multi-timecard schedules.
         (
             "GetAssignments",
             """
@@ -250,7 +236,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID, optional employee and date filters, added ProjectID column.
         (
             "GetTimecards",
             """
@@ -274,7 +259,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID, date-range filter, total_hours subquery, net pay.
         (
             "GetPayroll",
             """
@@ -304,8 +288,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID; made project/site/employee filters optional (NULL = no filter);
-        # uses employee_hours() stored function; changed name filters to ID-based for precision.
         (
             "GetReports",
             """
@@ -331,8 +313,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # --- Add data ---
-        # Correction: removed plaintext password check — Python hashes before calling.
         (
             "create_account",
             """
@@ -350,7 +330,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — ID generated in Python via next_id().
         (
             "add_employee",
             """
@@ -368,7 +347,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added ProjectName param (schema addition required by Milestone 2 UI).
         (
             "add_project",
             """
@@ -384,9 +362,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID + hourly_rate params; uses calc_gross_pay() stored function
-        # for amount; uses union dues (Union_tbl.Due) as per-employee deduction instead of
-        # flat value; fixes PaymentID using sequential counter from MAX.
         (
             "run_payroll",
             """
@@ -433,7 +408,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — ID generated in Python via next_id().
         (
             "add_timecard",
             """
@@ -450,7 +424,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID param for scoping.
         (
             "ActiveEmployees",
             """
@@ -462,7 +435,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID; added JOIN through Job_site and Project to scope by company.
         (
             "ActiveTimecards",
             """
@@ -478,7 +450,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID param.
         (
             "ActiveProjects",
             """
@@ -490,7 +461,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added CompanyID; made all filters optional; uses pay_by_site() stored function.
         (
             "generate_report",
             """
@@ -521,8 +491,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # --- Update data ---
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "edit_employee",
             """
@@ -541,7 +509,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "edit_job_site",
             """
@@ -560,7 +527,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # Correction: added ProjectName param (schema addition required by Milestone 2 UI).
         (
             "sp_edit_project",
             """
@@ -576,8 +542,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # --- Delete data ---
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "delete_employee",
             """
@@ -587,7 +551,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "delete_timecard",
             """
@@ -597,7 +560,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "delete_project",
             """
@@ -607,7 +569,6 @@ def ensure_db_procedures():
             END
             """,
         ),
-        # As in report — Python verifies CompanyID ownership before calling.
         (
             "delete_assignment",
             """
@@ -630,12 +591,6 @@ def ensure_db_procedures():
 
 
 def ensure_db_views():
-    """
-    Create security views for access control:
-    - v_users_no_password: value-independent view hiding the Password column
-    - v_active_employees: value-dependent view restricting rows to Active=1 employees only
-    - v_payroll_summary: hides per-payment amounts, exposes aggregates only
-    """
     views = [
         (
             "v_users_no_password",
@@ -707,13 +662,7 @@ def ensure_audit_table():
 
 
 def ensure_audit_triggers():
-    """
-    Create AFTER INSERT / BEFORE UPDATE / AFTER DELETE triggers on Payment, Payroll,
-    and Employee tables so that every sensitive change is recorded in AuditLog.
-    Each trigger is dropped and recreated so definitions stay current on each restart.
-    """
     triggers = [
-        # ---- Payment table ----
         (
             "trg_payment_after_insert",
             """
@@ -765,7 +714,6 @@ def ensure_audit_triggers():
             END
             """,
         ),
-        # ---- Payroll table ----
         (
             "trg_payroll_after_insert",
             """
@@ -783,7 +731,6 @@ def ensure_audit_triggers():
             END
             """,
         ),
-        # ---- Employee table ----
         (
             "trg_employee_before_update",
             """

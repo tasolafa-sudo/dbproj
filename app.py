@@ -753,21 +753,10 @@ def assignments():
     company_id = session["company_id"]
     with get_cursor() as cur:
         cur.execute(
-            """
-            SELECT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
-                   s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
-                   s.StartDate, s.EndDate, p.Status AS ProjectStatus
-            FROM Schedule s
-            JOIN Job_site js ON js.SiteID = s.SiteID
-            JOIN Project p ON p.ProjectID = js.ProjectID
-            JOIN Employee e ON e.EmployeeID = s.EmployeeID
-            JOIN Trade t ON t.TradeID = e.TradeID
-            WHERE p.CompanyID = %s
-            ORDER BY e.Name, s.StartDate
-            """,
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
             (company_id,),
         )
-        assignments = cur.fetchall()
+        employees = cur.fetchall()
 
         cur.execute(
             "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
@@ -776,12 +765,23 @@ def assignments():
         sites = cur.fetchall()
 
         cur.execute(
-            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s AND Active=TRUE ORDER BY Name",
+            """
+            SELECT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
+                   s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
+                   s.StartDate, s.EndDate, p.Status AS ProjectStatus
+            FROM Schedule s
+            JOIN Employee e ON e.EmployeeID = s.EmployeeID
+            JOIN Trade t ON t.TradeID = e.TradeID
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE p.CompanyID = %s
+            ORDER BY e.Name, s.StartDate
+            """,
             (company_id,),
         )
-        employees = cur.fetchall()
+        assignments = cur.fetchall()
 
-    return render_template("assignments.html", assignments=assignments, sites=sites)
+    return render_template("assignments.html", assignments=assignments, sites=sites, employees=employees)
 
 
 @app.route("/assignments/add", methods=["POST"])

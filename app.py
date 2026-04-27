@@ -1203,41 +1203,39 @@ def export_report():
     )
 
 
-@app.route("/change_password", methods=["GET", "POST"])
+@app.route("/change_password", methods=["POST"])
 @login_required
 def change_password():
-    if request.method == "POST":
-        current_password = request.form.get("current_password", "")
-        new_password = request.form.get("new_password", "")
-        confirm = request.form.get("confirm_password", "")
+    referrer = request.form.get("_referrer") or url_for("dashboard")
+    current_password = request.form.get("current_password", "")
+    new_password = request.form.get("new_password", "")
+    confirm = request.form.get("confirm_password", "")
 
-        if new_password != confirm:
-            flash("New passwords do not match.", "danger")
-            return render_template("change_password.html")
+    if new_password != confirm:
+        flash("New passwords do not match.", "danger")
+        return redirect(referrer)
 
-        if len(new_password) < 8:
-            flash("New password must be at least 8 characters.", "danger")
-            return render_template("change_password.html")
+    if len(new_password) < 8:
+        flash("New password must be at least 8 characters.", "danger")
+        return redirect(referrer)
 
-        with get_cursor() as cur:
-            cur.execute("CALL login(%s)", (session["username"],))
-            user = cur.fetchone()
+    with get_cursor() as cur:
+        cur.execute("CALL login(%s)", (session["username"],))
+        user = cur.fetchone()
 
-        if not user or not check_password_hash(user["Password"], current_password):
-            flash("Current password is incorrect.", "danger")
-            return render_template("change_password.html")
+    if not user or not check_password_hash(user["Password"], current_password):
+        flash("Current password is incorrect.", "danger")
+        return redirect(referrer)
 
-        new_hash = generate_password_hash(new_password)
-        with get_cursor() as cur:
-            # Prepared statement — user_id from session, new hash as parameter, never raw input in SQL.
-            cur.execute(
-                "UPDATE User_tbl SET Password=%s WHERE UserID=%s",
-                (new_hash, session["user_id"]),
-            )
-        flash("Password updated successfully.", "success")
-        return redirect(url_for("dashboard"))
-
-    return render_template("change_password.html")
+    new_hash = generate_password_hash(new_password)
+    with get_cursor() as cur:
+        # Prepared statement — user_id from session, new hash as parameter, never raw input in SQL.
+        cur.execute(
+            "UPDATE User_tbl SET Password=%s WHERE UserID=%s",
+            (new_hash, session["user_id"]),
+        )
+    flash("Password updated successfully.", "success")
+    return redirect(url_for("dashboard"))
 
 
 @app.errorhandler(Exception)

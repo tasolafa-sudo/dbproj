@@ -51,11 +51,15 @@
           <a class="nav-btn {% if request.endpoint == 'timecards' %}active{% endif %}" href="{{ url_for('timecards') }}">Timecards</a>
           <a class="nav-btn {% if request.endpoint == 'payroll' %}active{% endif %}" href="{{ url_for('payroll') }}">Payroll</a>
           <a class="nav-btn {% if request.endpoint == 'reports' or request.endpoint == 'export_report' %}active{% endif %}" href="{{ url_for('reports') }}">Reports</a>
-          <a class="nav-btn {% if request.endpoint == 'change_password' %}active{% endif %}" href="{{ url_for('change_password') }}">Change Password</a>
           {% endif %}
         </nav>
 
-        <a class="logout-link" href="{{ url_for('logout') }}">Log out</a>
+        <div class="sidebar-footer">
+          {% if not session.get("is_admin") %}
+          <button type="button" class="sidebar-link-btn" data-open-modal="change-pw-modal">Change Password</button>
+          {% endif %}
+          <a class="logout-link" href="{{ url_for('logout') }}">Log out</a>
+        </div>
       </aside>
 
       <section class="page-panel">
@@ -72,5 +76,23 @@
       </section>
     </div>
   {% endif %}
+{% if session.get("user_id") %}
+<div class="modal" id="change-pw-modal">
+  <div class="modal-panel hero-blue">
+    <button class="modal-close" data-close-modal>&times;</button>
+    <h2 class="section-title center">Change Password</h2>
+    <form method="post" action="{{ url_for('change_password') }}" class="form-grid single">
+      <input type="hidden" name="_referrer" value="{{ request.path }}">
+      <label><span>Current Password</span><input type="password" name="current_password" required></label>
+      <label><span>New Password (min. 8 characters)</span><input type="password" name="new_password" required></label>
+      <label><span>Confirm New Password</span><input type="password" name="confirm_password" required></label>
+      <div class="button-row">
+        <button type="submit" class="pixel-btn primary">Update Password</button>
+        <button type="button" class="pixel-btn secondary" data-close-modal>Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 </body>
 </html>

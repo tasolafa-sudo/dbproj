@@ -107,7 +107,9 @@ input, select {
   font-weight: 500;
 }
 .nav-btn.active, .nav-btn:hover { background: #f0f0f0; }
-.logout-link { margin-top: auto; font-size: 13px; text-decoration: underline; }
+.logout-link { font-size: 13px; text-decoration: underline; }
+.sidebar-footer { margin-top: auto; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.sidebar-link-btn { font-size: 13px; text-decoration: underline; background: none; border: none; cursor: pointer; padding: 0; color: inherit; font-family: inherit; text-align: left; }
 .page-panel {
   background: var(--sky);
   padding: 26px;

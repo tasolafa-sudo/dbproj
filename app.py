@@ -954,12 +954,11 @@ def timecards():
 
         cur.execute(
             """
-            SELECT DISTINCT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
-            FROM Schedule s
-            JOIN Job_site js ON js.SiteID = s.SiteID
+            SELECT DISTINCT js.SiteID, js.SiteName
+            FROM Job_site js
             JOIN Project p ON p.ProjectID = js.ProjectID
             WHERE p.CompanyID = %s
-            ORDER BY s.StartDate DESC
+            ORDER BY js.SiteName
             """,
             (company_id,),
         )
@@ -984,18 +983,37 @@ def add_timecard():
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         employee_id = request.form.get("employee_id")
+        site_id = request.form.get("schedule_id")
+
         cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
         if not cur.fetchone():
             cur.close()
             flash("Invalid employee for this company.", "danger")
             return redirect(url_for("timecards"))
+
+        cur.execute(
+            """
+            SELECT s.ScheduleID FROM Schedule s
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE s.SiteID = %s AND s.EmployeeID = %s AND p.CompanyID = %s
+            LIMIT 1
+            """,
+            (site_id, employee_id, company_id),
+        )
+        schedule = cur.fetchone()
+        if not schedule:
+            cur.close()
+            flash("No schedule found for this employee at that site.", "danger")
+            return redirect(url_for("timecards"))
+
         timecard_id = next_id(cur, "Timecard", "TimecardID", "TC", 4)
         cur.execute("UNLOCK TABLES")
         cur.execute(
             "CALL add_timecard(%s, %s, %s, %s, %s)",
             (
                 timecard_id,
-                request.form.get("schedule_id"),
+                schedule["ScheduleID"],
                 employee_id,
                 safe_date(request.form.get("date")),
                 float(request.form.get("hours")),
@@ -1005,11 +1023,28 @@ def add_timecard():
     flash("Timecard added.", "success")
     return redirect(url_for("timecards"))
 
-
 @app.route("/timecards/<timecard_id>/edit", methods=["POST"])
 @login_required
 def edit_timecard(timecard_id):
     company_id = session["company_id"]
+    employee_id = request.form.get("employee_id")
+    site_id = request.form.get("schedule_id")
+
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT s.ScheduleID FROM Schedule s
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE s.SiteID = %s AND s.EmployeeID = %s AND p.CompanyID = %s
+            LIMIT 1
+            """,
+            (site_id, employee_id, company_id),
+        )
+        schedule = cur.fetchone()
+        if not schedule:
+            flash("No schedule found for this employee at that site.", "danger")
+            return redirect(url_for("timecards"))
     with get_cursor() as cur:
         cur.execute(
             """

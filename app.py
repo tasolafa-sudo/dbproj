@@ -884,12 +884,11 @@ def timecards():
 
         cur.execute(
             """
-            SELECT DISTINCT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
-            FROM Schedule s
-            JOIN Job_site js ON js.SiteID = s.SiteID
+            SELECT DISTINCT js.SiteID, js.SiteName
+            FROM Job_site js
             JOIN Project p ON p.ProjectID = js.ProjectID
             WHERE p.CompanyID = %s
-            ORDER BY s.StartDate DESC
+            ORDER BY js.SiteName
             """,
             (company_id,),
         )

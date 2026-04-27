@@ -1,11 +1,9 @@
-import csv
-import io
 import os
 from datetime import datetime
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, Response, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from flask_limiter import Limiter 
@@ -1182,40 +1180,9 @@ def reports():
         hourly_rate=hourly_rate,
     )
 
-
-@app.route("/reports/export")
-@login_required
-def export_report():
-    company_id = session["company_id"]
-    report_params = parse_report_params()
-    report_type = report_params["report_type"]
-    start_date = report_params["start_date"]
-    end_date = report_params["end_date"]
-    employee_id = report_params["employee_id"]
-    site_id = report_params["site_id"]
-    hourly_rate = report_params["hourly_rate"]
-
-    if is_invalid_date_range(safe_date(start_date), safe_date(end_date)):
-        flash("End date cannot be before start date.", "danger")
-        return redirect(url_for("reports", type=report_type))
-
-    with get_cursor() as cur:
-        rows = fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate, default_to_pay_by_site=True)
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    if rows:
-        writer.writerow(rows[0].keys())
-        for row in rows:
-            writer.writerow(row.values())
-    csv_bytes = output.getvalue()
-    return Response(
-        csv_bytes,
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={report_type}.csv"},
-    )
-
-
+# --------------------------
+# Change Password
+# --------------------------
 @app.route("/change_password", methods=["POST"])
 @login_required
 def change_password():

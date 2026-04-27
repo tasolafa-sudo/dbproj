@@ -828,15 +828,27 @@ def assignments():
     company_id = session["company_id"]
     with get_cursor() as cur:
         cur.execute(
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
+            (company_id,),
+        )
+        employees = cur.fetchall()
+
+        cur.execute(
+            "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
+            (company_id,),
+        )
+        sites = cur.fetchall()
+
+        cur.execute(
             """
             SELECT e.EmployeeID, e.Name AS EmployeeName, t.TradeName,
                    s.ScheduleID, js.SiteID, js.SiteName, p.ProjectID,
                    s.StartDate, s.EndDate, p.Status AS ProjectStatus
             FROM Schedule s
-            JOIN Job_site js ON js.SiteID = s.SiteID
-            JOIN Project p ON p.ProjectID = js.ProjectID
             JOIN Employee e ON e.EmployeeID = s.EmployeeID
             JOIN Trade t ON t.TradeID = e.TradeID
+            JOIN Job_site js ON js.SiteID = s.SiteID
+            JOIN Project p ON p.ProjectID = js.ProjectID
             WHERE p.CompanyID = %s
             ORDER BY e.Name, s.StartDate
             """,
@@ -844,19 +856,7 @@ def assignments():
         )
         assignments = cur.fetchall()
 
-        cur.execute(
-            "SELECT js.SiteID, js.SiteName FROM Job_site js JOIN Project p ON p.ProjectID = js.ProjectID WHERE p.CompanyID=%s ORDER BY js.SiteName",
-            (company_id,),
-        )
-        sites = cur.fetchall()
-        
-        cur.execute(
-            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
-            (company_id,),
-        )
-        employees = cur.fetchall()
-
-    return render_template("assignments.html", assignments=assignments, sites=sites)
+    return render_template("assignments.html", assignments=assignments, sites=sites, employees=employees)
 
 
 @app.route("/assignments/<schedule_id>/edit", methods=["POST"])

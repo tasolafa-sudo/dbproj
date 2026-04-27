@@ -13,16 +13,26 @@ from flask_limiter.util import get_remote_address
 import warnings
 from db import get_conn, get_cursor
 from migrations import (
+    ensure_audit_table,
+    ensure_audit_triggers,
     ensure_db_constraints,
     ensure_db_functions,
     ensure_db_procedures,
+    ensure_db_views,
     ensure_project_name_column,
 )
 
 load_dotenv()
 
+# Admin password is hashed once at startup so the plaintext is never compared directly.
+_ADMIN_PASSWORD_HASH = generate_password_hash(os.getenv("ADMIN_PASSWORD", "owner123"))
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
+# Secure session cookies: JS can't read them, only sent over HTTPS, and blocked for cross-site requests.
+app.config["SESSION_COOKIE_SECURE"] = True
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # -------------------------- 
 # Rate limiter 
@@ -122,6 +132,9 @@ def _ensure_password_column_once():
         ensure_db_functions()
         ensure_db_constraints()
         ensure_db_procedures()
+        ensure_db_views()
+        ensure_audit_table()
+        ensure_audit_triggers()
 
 
 def login_required(view):
@@ -175,6 +188,22 @@ def safe_date(value):
     if not value:
         return None
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+_FIELD_MAX_LENGTHS = {
+    "username": 50, "password": 255, "company_id": 6, "company_name": 100,
+    "employee_name": 50, "project_name": 100, "site_name": 50, "location": 100,
+}
+
+
+def validate_lengths(**fields):
+    """Return an error string if any field exceeds its DB column length, else None."""
+    for field, value in fields.items():
+        max_len = _FIELD_MAX_LENGTHS.get(field)
+        if max_len and value and len(str(value)) > max_len:
+            label = field.replace("_", " ").title()
+            return f"{label} must be {max_len} characters or fewer."
+    return None
 
 
 def is_invalid_date_range(start_date, end_date):
@@ -258,21 +287,16 @@ def authenticate_user(username, password):
         return None
 
     stored = user["Password"]
-    valid = False
-
-    # Supports legacy seed data with plaintext passwords and newly created hashed passwords.
-    if stored.startswith("pbkdf2:") or stored.startswith("scrypt:"):
-        valid = check_password_hash(stored, password)
-    else:
-        valid = stored == password
-
+    # All passwords are stored as werkzeug hashes (pbkdf2/scrypt). Plaintext is never accepted.
+    # werkzeug's check_password_hash hashes the input and compares — passwords are never
+    # compared in the clear, and the stored hash cannot be reversed to recover the original.
+    valid = check_password_hash(stored, password)
     return user if valid else None
 
 
 def authenticate_admin(username, password):
     expected_username = os.getenv("ADMIN_USERNAME", "owner")
-    expected_password = os.getenv("ADMIN_PASSWORD", "owner123")
-    return username == expected_username and password == expected_password
+    return username == expected_username and check_password_hash(_ADMIN_PASSWORD_HASH, password)
 
 
 # --------------------------
@@ -323,6 +347,15 @@ def register():
 
         if password != confirm:
             flash("Passwords do not match.", "danger")
+            return render_template("register.html", companies=companies)
+
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.", "danger")
+            return render_template("register.html", companies=companies)
+
+        err = validate_lengths(username=username)
+        if err:
+            flash(err, "danger")
             return render_template("register.html", companies=companies)
 
         with get_conn() as conn:
@@ -410,6 +443,11 @@ def admin_add_company():
 
     if not company_id or not company_name or not company_auth_code:
         flash("Company ID, Company Name, and Auth Code are required.", "danger")
+        return redirect(url_for("admin_companies"))
+
+    err = validate_lengths(company_id=company_id, company_name=company_name)
+    if err:
+        flash(err, "danger")
         return redirect(url_for("admin_companies"))
 
     with get_conn() as conn:
@@ -537,6 +575,11 @@ def employees():
 @login_required
 def add_employee():
     company_id = session["company_id"]
+    name = request.form.get("name", "").strip()
+    err = validate_lengths(employee_name=name)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("employees"))
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         employee_id = next_id(cur, "Employee", "EmployeeID", "E", 5)
@@ -548,7 +591,7 @@ def add_employee():
                 company_id,
                 request.form.get("union_id") or None,
                 request.form.get("trade_id"),
-                request.form.get("name"),
+                name,
                 to_bool(request.form.get("active")),
             ),
         )
@@ -561,6 +604,11 @@ def add_employee():
 @login_required
 def edit_employee(employee_id):
     company_id = session["company_id"]
+    name = request.form.get("name", "").strip()
+    err = validate_lengths(employee_name=name)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("employees"))
     with get_cursor() as cur:
         cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
         if not cur.fetchone():
@@ -570,7 +618,7 @@ def edit_employee(employee_id):
             "CALL edit_employee(%s, %s, %s, %s, %s)",
             (
                 employee_id,
-                request.form.get("name"),
+                name,
                 request.form.get("union_id") or None,
                 request.form.get("trade_id"),
                 to_bool(request.form.get("active")),
@@ -618,13 +666,18 @@ def projects():
 @login_required
 def add_project():
     company_id = session["company_id"]
+    project_name = request.form.get("project_name", "").strip()
+    err = validate_lengths(project_name=project_name)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("projects"))
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         project_id = next_id(cur, "Project", "ProjectID", "P", 5)
         cur.execute("UNLOCK TABLES")
         cur.execute(
             "CALL add_project(%s, %s, %s, %s)",
-            (project_id, company_id, request.form.get("project_name", "").strip(), to_bool(request.form.get("status"))),
+            (project_id, company_id, project_name, to_bool(request.form.get("status"))),
         )
         cur.close()
     flash("Project added.", "success")
@@ -635,6 +688,11 @@ def add_project():
 @login_required
 def edit_project(project_id):
     company_id = session["company_id"]
+    project_name = request.form.get("project_name", "").strip()
+    err = validate_lengths(project_name=project_name)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("projects"))
     with get_cursor() as cur:
         cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
         if not cur.fetchone():
@@ -642,7 +700,7 @@ def edit_project(project_id):
             return redirect(url_for("projects"))
         cur.execute(
             "CALL sp_edit_project(%s, %s, %s)",
-            (project_id, to_bool(request.form.get("status")), request.form.get("project_name", "").strip()),
+            (project_id, to_bool(request.form.get("status")), project_name),
         )
     flash("Project updated.", "success")
     return redirect(url_for("projects"))
@@ -691,6 +749,12 @@ def sites():
 def add_site():
     company_id = session["company_id"]
     project_id = request.form.get("project_id")
+    site_name = request.form.get("site_name", "").strip()
+    location = request.form.get("location", "").strip()
+    err = validate_lengths(site_name=site_name, location=location)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("sites"))
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (project_id, company_id))
@@ -701,7 +765,7 @@ def add_site():
         site_id = next_id(cur, "Job_site", "SiteID", "S", 5)
         cur.execute(
             "INSERT INTO Job_site (SiteID, ProjectID, SiteName, Location) VALUES (%s, %s, %s, %s)",
-            (site_id, project_id, request.form.get("site_name"), request.form.get("location")),
+            (site_id, project_id, site_name, location),
         )
         cur.execute("UNLOCK TABLES")
         cur.close()
@@ -714,6 +778,12 @@ def add_site():
 def edit_site(site_id):
     company_id = session["company_id"]
     new_project_id = request.form.get("project_id")
+    site_name = request.form.get("site_name", "").strip()
+    location = request.form.get("location", "").strip()
+    err = validate_lengths(site_name=site_name, location=location)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("sites"))
     with get_cursor() as cur:
         cur.execute("SELECT 1 FROM Project WHERE ProjectID=%s AND CompanyID=%s", (new_project_id, company_id))
         if not cur.fetchone():
@@ -725,7 +795,7 @@ def edit_site(site_id):
             return redirect(url_for("sites"))
         cur.execute(
             "CALL edit_job_site(%s, %s, %s, %s)",
-            (site_id, new_project_id, request.form.get("site_name"), request.form.get("location")),
+            (site_id, new_project_id, site_name, location),
         )
     flash("Job site updated.", "success")
     return redirect(url_for("sites"))
@@ -1102,9 +1172,48 @@ def export_report():
     )
 
 
+@app.route("/change_password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if new_password != confirm:
+            flash("New passwords do not match.", "danger")
+            return render_template("change_password.html")
+
+        if len(new_password) < 8:
+            flash("New password must be at least 8 characters.", "danger")
+            return render_template("change_password.html")
+
+        with get_cursor() as cur:
+            cur.execute("CALL login(%s)", (session["username"],))
+            user = cur.fetchone()
+
+        if not user or not check_password_hash(user["Password"], current_password):
+            flash("Current password is incorrect.", "danger")
+            return render_template("change_password.html")
+
+        new_hash = generate_password_hash(new_password)
+        with get_cursor() as cur:
+            # Prepared statement — user_id from session, new hash as parameter, never raw input in SQL.
+            cur.execute(
+                "UPDATE User_tbl SET Password=%s WHERE UserID=%s",
+                (new_hash, session["user_id"]),
+            )
+        flash("Password updated successfully.", "success")
+        return redirect(url_for("dashboard"))
+
+    return render_template("change_password.html")
+
+
 @app.errorhandler(Exception)
 def handle_error(exc):
-    return render_template("error.html", error=str(exc)), 500
+    # Log the full error server-side but never expose DB internals or stack traces to the user.
+    app.logger.error("Unhandled exception: %s", exc, exc_info=True)
+    return render_template("error.html"), 500
 
 
 if __name__ == "__main__":

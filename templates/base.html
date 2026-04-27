@@ -51,6 +51,7 @@
           <a class="nav-btn {% if request.endpoint == 'timecards' %}active{% endif %}" href="{{ url_for('timecards') }}">Timecards</a>
           <a class="nav-btn {% if request.endpoint == 'payroll' %}active{% endif %}" href="{{ url_for('payroll') }}">Payroll</a>
           <a class="nav-btn {% if request.endpoint == 'reports' or request.endpoint == 'export_report' %}active{% endif %}" href="{{ url_for('reports') }}">Reports</a>
+          <a class="nav-btn {% if request.endpoint == 'change_password' %}active{% endif %}" href="{{ url_for('change_password') }}">Change Password</a>
           {% endif %}
         </nav>
 

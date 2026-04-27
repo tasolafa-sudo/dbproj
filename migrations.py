@@ -627,3 +627,203 @@ def ensure_db_procedures():
                 cur.close()
         except Exception as exc:
             logger.warning("Could not create procedure %s: %s", name, exc)
+
+
+def ensure_db_views():
+    """
+    Create security views for access control:
+    - v_users_no_password: value-independent view hiding the Password column
+    - v_active_employees: value-dependent view restricting rows to Active=1 employees only
+    - v_payroll_summary: hides per-payment amounts, exposes aggregates only
+    """
+    views = [
+        (
+            "v_users_no_password",
+            """
+            CREATE OR REPLACE VIEW v_users_no_password AS
+            SELECT UserID, CompanyID, Username
+            FROM User_tbl
+            """,
+        ),
+        (
+            "v_active_employees",
+            """
+            CREATE OR REPLACE VIEW v_active_employees AS
+            SELECT EmployeeID, CompanyID, Name, TradeID, UnionID
+            FROM Employee
+            WHERE Active = 1
+            """,
+        ),
+        (
+            "v_payroll_summary",
+            """
+            CREATE OR REPLACE VIEW v_payroll_summary AS
+            SELECT
+                pr.PayrollID,
+                pr.CompanyID,
+                pr.PeriodStart,
+                pr.PeriodEnd,
+                COUNT(DISTINCT p.EmployeeID) AS EmployeeCount,
+                SUM(p.Amount)               AS TotalGross,
+                SUM(p.Amount - p.Deduction) AS TotalNet
+            FROM Payroll pr
+            LEFT JOIN Payment p ON p.PayrollID = pr.PayrollID
+            GROUP BY pr.PayrollID, pr.CompanyID, pr.PeriodStart, pr.PeriodEnd
+            """,
+        ),
+    ]
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            for _name, ddl in views:
+                cur.execute(ddl.strip())
+            cur.close()
+    except Exception as exc:
+        logger.warning("Could not create security views: %s", exc)
+
+
+def ensure_audit_table():
+    """Create AuditLog table for logging sensitive data operations."""
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS AuditLog (
+                    LogID         INT AUTO_INCREMENT PRIMARY KEY,
+                    TableName     VARCHAR(50)                        NOT NULL,
+                    OperationType ENUM('INSERT','UPDATE','DELETE')   NOT NULL,
+                    RecordID      VARCHAR(20)                        NOT NULL,
+                    ChangedBy     VARCHAR(50)                        DEFAULT NULL,
+                    ChangeTime    DATETIME                           NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    OldValue      TEXT                               DEFAULT NULL,
+                    NewValue      TEXT                               DEFAULT NULL
+                )
+                """
+            )
+            cur.close()
+    except Exception as exc:
+        logger.warning("Could not create AuditLog table: %s", exc)
+
+
+def ensure_audit_triggers():
+    """
+    Create AFTER INSERT / BEFORE UPDATE / AFTER DELETE triggers on Payment, Payroll,
+    and Employee tables so that every sensitive change is recorded in AuditLog.
+    Each trigger is dropped and recreated so definitions stay current on each restart.
+    """
+    triggers = [
+        # ---- Payment table ----
+        (
+            "trg_payment_after_insert",
+            """
+            CREATE TRIGGER trg_payment_after_insert
+            AFTER INSERT ON Payment
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO AuditLog (TableName, OperationType, RecordID, NewValue)
+                VALUES (
+                    'Payment', 'INSERT', NEW.PaymentID,
+                    CONCAT('PayrollID=', NEW.PayrollID,
+                           ', EmployeeID=', NEW.EmployeeID,
+                           ', Amount=', NEW.Amount,
+                           ', Deduction=', NEW.Deduction)
+                );
+            END
+            """,
+        ),
+        (
+            "trg_payment_before_update",
+            """
+            CREATE TRIGGER trg_payment_before_update
+            BEFORE UPDATE ON Payment
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO AuditLog (TableName, OperationType, RecordID, OldValue, NewValue)
+                VALUES (
+                    'Payment', 'UPDATE', OLD.PaymentID,
+                    CONCAT('Amount=', OLD.Amount, ', Deduction=', OLD.Deduction),
+                    CONCAT('Amount=', NEW.Amount, ', Deduction=', NEW.Deduction)
+                );
+            END
+            """,
+        ),
+        (
+            "trg_payment_after_delete",
+            """
+            CREATE TRIGGER trg_payment_after_delete
+            AFTER DELETE ON Payment
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO AuditLog (TableName, OperationType, RecordID, OldValue)
+                VALUES (
+                    'Payment', 'DELETE', OLD.PaymentID,
+                    CONCAT('PayrollID=', OLD.PayrollID,
+                           ', EmployeeID=', OLD.EmployeeID,
+                           ', Amount=', OLD.Amount)
+                );
+            END
+            """,
+        ),
+        # ---- Payroll table ----
+        (
+            "trg_payroll_after_insert",
+            """
+            CREATE TRIGGER trg_payroll_after_insert
+            AFTER INSERT ON Payroll
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO AuditLog (TableName, OperationType, RecordID, NewValue)
+                VALUES (
+                    'Payroll', 'INSERT', NEW.PayrollID,
+                    CONCAT('CompanyID=', NEW.CompanyID,
+                           ', PeriodStart=', NEW.PeriodStart,
+                           ', PeriodEnd=', NEW.PeriodEnd)
+                );
+            END
+            """,
+        ),
+        # ---- Employee table ----
+        (
+            "trg_employee_before_update",
+            """
+            CREATE TRIGGER trg_employee_before_update
+            BEFORE UPDATE ON Employee
+            FOR EACH ROW
+            BEGIN
+                IF OLD.Name != NEW.Name OR OLD.Active != NEW.Active THEN
+                    INSERT INTO AuditLog (TableName, OperationType, RecordID, OldValue, NewValue)
+                    VALUES (
+                        'Employee', 'UPDATE', OLD.EmployeeID,
+                        CONCAT('Name=', OLD.Name, ', Active=', OLD.Active),
+                        CONCAT('Name=', NEW.Name, ', Active=', NEW.Active)
+                    );
+                END IF;
+            END
+            """,
+        ),
+        (
+            "trg_employee_after_delete",
+            """
+            CREATE TRIGGER trg_employee_after_delete
+            AFTER DELETE ON Employee
+            FOR EACH ROW
+            BEGIN
+                INSERT INTO AuditLog (TableName, OperationType, RecordID, OldValue)
+                VALUES (
+                    'Employee', 'DELETE', OLD.EmployeeID,
+                    CONCAT('Name=', OLD.Name, ', CompanyID=', OLD.CompanyID)
+                );
+            END
+            """,
+        ),
+    ]
+    for trigger_name, ddl in triggers:
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+                cur.execute(ddl.strip())
+                cur.close()
+        except Exception as exc:
+            logger.warning("Could not create trigger %s: %s", trigger_name, exc)

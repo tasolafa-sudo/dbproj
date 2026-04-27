@@ -902,6 +902,10 @@ def add_assignment():
         flash("End date cannot be before start date.", "danger")
         return redirect(url_for("assignments"))
 
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
+        
     with get_cursor() as cur:
         cur.execute(
             """

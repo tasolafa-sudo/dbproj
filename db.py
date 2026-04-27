@@ -49,9 +49,6 @@ def get_cursor(dictionary=True):
         try:
             yield cursor
         finally:
-            # Drain any leftover result sets from CALL statements before
-            # the connection returns to the pool, or mysql.connector marks
-            # it as broken and permanently removes it from the pool.
             try:
                 while cursor.nextset():
                     pass

@@ -261,7 +261,7 @@ def ensure_db_procedures():
             )
             BEGIN
                 SELECT tc.TimecardID, tc.ScheduleID, tc.EmployeeID, tc.Date, tc.Hours,
-                       e.Name AS EmployeeName, js.SiteName, p.ProjectID
+                       e.Name AS EmployeeName, js.SiteID, js.SiteName, p.ProjectID
                 FROM Timecard tc
                 JOIN Employee e ON e.EmployeeID = tc.EmployeeID
                 JOIN Schedule s ON s.ScheduleID = tc.ScheduleID

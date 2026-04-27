@@ -183,7 +183,10 @@ def to_bool(value):
 def safe_date(value):
     if not value:
         return None
-    return datetime.strptime(value, "%Y-%m-%d").date()
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 _FIELD_MAX_LENGTHS = {
@@ -579,7 +582,6 @@ def add_employee():
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         employee_id = next_id(cur, "Employee", "EmployeeID", "E", 5)
-        cur.execute("UNLOCK TABLES")
         cur.execute(
             "CALL add_employee(%s, %s, %s, %s, %s, %s)",
             (
@@ -591,6 +593,7 @@ def add_employee():
                 to_bool(request.form.get("active")),
             ),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Employee added.", "success")
     return redirect(url_for("employees"))
@@ -670,11 +673,11 @@ def add_project():
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
         project_id = next_id(cur, "Project", "ProjectID", "P", 5)
-        cur.execute("UNLOCK TABLES")
         cur.execute(
             "CALL add_project(%s, %s, %s, %s)",
             (project_id, company_id, project_name, to_bool(request.form.get("status"))),
         )
+        cur.execute("UNLOCK TABLES")
         cur.close()
     flash("Project added.", "success")
     return redirect(url_for("projects"))
@@ -868,6 +871,7 @@ def add_assignment():
         cur = conn.cursor(dictionary=True)
 
         schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
+        cur.execute("UNLOCK TABLES")
 
         cur.execute(
             """
@@ -897,12 +901,18 @@ def edit_assignment(schedule_id):
             UPDATE Schedule
             SET SiteID=%s, StartDate=%s, EndDate=%s
             WHERE ScheduleID=%s
+              AND SiteID IN (
+                  SELECT js.SiteID FROM Job_site js
+                  JOIN Project p ON p.ProjectID = js.ProjectID
+                  WHERE p.CompanyID=%s
+              )
             """,
             (
                 request.form.get("site_id"),
                 start_date,
                 end_date,
                 schedule_id,
+                company_id,
             ),
         )
     flash("Assignment updated.", "success")
@@ -1050,7 +1060,7 @@ def edit_timecard(timecard_id):
               AND EmployeeID IN (SELECT EmployeeID FROM Employee WHERE CompanyID=%s)
             """,
             (
-                request.form.get("schedule_id"),
+                schedule["ScheduleID"],
                 request.form.get("employee_id"),
                 safe_date(request.form.get("date")),
                 float(request.form.get("hours")),

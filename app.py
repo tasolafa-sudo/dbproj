@@ -1,9 +1,11 @@
+import csv
+import io
 import os
 from datetime import datetime
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, Response, flash, g, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from flask_limiter import Limiter 
@@ -204,6 +206,13 @@ def is_invalid_date_range(start_date, end_date):
     return bool(start_date and end_date and end_date < start_date)
 
 
+def safe_float(value, default=None):
+    try:
+        return float(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
 def parse_report_params():
     return {
         "report_type": request.args.get("type", "hours_by_site"),
@@ -211,7 +220,7 @@ def parse_report_params():
         "end_date": request.args.get("end_date", ""),
         "employee_id": request.args.get("employee_id", ""),
         "site_id": request.args.get("site_id", ""),
-        "hourly_rate": float(request.args.get("hourly_rate") or 40.0),
+        "hourly_rate": safe_float(request.args.get("hourly_rate"), 40.0),
     }
 
 
@@ -1011,6 +1020,12 @@ def add_timecard():
             flash("No schedule found for this employee at that site.", "danger")
             return redirect(url_for("timecards"))
 
+        hours = safe_float(request.form.get("hours"))
+        if hours is None:
+            cur.close()
+            flash("Hours must be a valid number.", "danger")
+            return redirect(url_for("timecards"))
+
         timecard_id = next_id(cur, "Timecard", "TimecardID", "TC", 4)
         cur.execute("UNLOCK TABLES")
         cur.execute(
@@ -1020,7 +1035,7 @@ def add_timecard():
                 schedule["ScheduleID"],
                 employee_id,
                 safe_date(request.form.get("date")),
-                float(request.form.get("hours")),
+                hours,
             ),
         )
         cur.close()
@@ -1049,6 +1064,11 @@ def edit_timecard(timecard_id):
         if not schedule:
             flash("No schedule found for this employee at that site.", "danger")
             return redirect(url_for("timecards"))
+    hours = safe_float(request.form.get("hours"))
+    if hours is None:
+        flash("Hours must be a valid number.", "danger")
+        return redirect(url_for("timecards"))
+
     with get_cursor() as cur:
         cur.execute(
             """
@@ -1061,7 +1081,7 @@ def edit_timecard(timecard_id):
                 schedule["ScheduleID"],
                 request.form.get("employee_id"),
                 safe_date(request.form.get("date")),
-                float(request.form.get("hours")),
+                hours,
                 timecard_id,
                 company_id,
             ),
@@ -1114,7 +1134,7 @@ def payroll():
         if is_invalid_date_range(start_date, end_date):
             flash("End date cannot be before start date.", "danger")
             return redirect(url_for("payroll"))
-        hourly_rate = float(request.form.get("hourly_rate") or 40.0)
+        hourly_rate = safe_float(request.form.get("hourly_rate"), 40.0)
 
         with get_conn() as conn:
             cur = conn.cursor(dictionary=True)
@@ -1189,6 +1209,40 @@ def reports():
         site_id=site_id,
         hourly_rate=hourly_rate,
     )
+
+
+@app.route("/reports/export")
+@login_required
+def export_report():
+    company_id = session["company_id"]
+    report_params = parse_report_params()
+    report_type = report_params["report_type"]
+    start_date = report_params["start_date"]
+    end_date = report_params["end_date"]
+    employee_id = report_params["employee_id"]
+    site_id = report_params["site_id"]
+    hourly_rate = report_params["hourly_rate"]
+
+    with get_cursor() as cur:
+        rows = fetch_report_rows(cur, company_id, report_type, start_date, end_date, employee_id, site_id, hourly_rate)
+
+    if not rows:
+        flash("No data to export.", "warning")
+        return redirect(url_for("reports", type=report_type, start_date=start_date, end_date=end_date,
+                                employee_id=employee_id, site_id=site_id, hourly_rate=hourly_rate))
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+
+    filename = f"report_{report_type}_{start_date}_{end_date}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
 
 # --------------------------
 # Change Password

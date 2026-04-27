@@ -752,8 +752,11 @@ def delete_site(site_id):
 def assignments():
     company_id = session["company_id"]
     with get_cursor() as cur:
-        cur.execute("CALL GetAssignments(%s)", (company_id,))
-        assignments = cur.fetchall()
+        cur.execute(
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name",
+            (company_id,),
+        )
+        employees = cur.fetchall()
 
     with get_cursor() as cur:
         cur.execute(
@@ -762,7 +765,11 @@ def assignments():
         )
         sites = cur.fetchall()
 
-    return render_template("assignments.html", assignments=assignments, sites=sites)
+    with get_cursor() as cur:
+        cur.execute("CALL GetAssignments(%s)", (company_id,))
+        assignments = cur.fetchall()
+
+    return render_template("assignments.html", assignments=assignments, sites=sites, employees=employees)
 
 
 @app.route("/assignments/<schedule_id>/edit", methods=["POST"])
@@ -777,26 +784,75 @@ def edit_assignment(schedule_id):
     with get_cursor() as cur:
         cur.execute(
             """
-            UPDATE Schedule
-            SET SiteID=%s, StartDate=%s, EndDate=%s
-            WHERE ScheduleID=%s
-              AND SiteID IN (
-                SELECT js.SiteID FROM Job_site js
+            UPDATE Schedule s
+            JOIN Timecard tc ON tc.ScheduleID = s.ScheduleID
+            SET s.SiteID=%s, s.StartDate=%s,s.EndDate=%s
+            WHERE s.ScheduleID=%s AND tc.EmployeeID=%s AND s.SiteID IN (
+                SELECT js.SiteID
+                FROM Job_site js
                 JOIN Project p ON p.ProjectID = js.ProjectID
                 WHERE p.CompanyID = %s
-              )
+            )
             """,
             (
                 request.form.get("site_id"),
                 start_date,
                 end_date,
                 schedule_id,
+                request.form.get("employee_id"),
                 company_id,
             ),
         )
     flash("Assignment updated.", "success")
     return redirect(url_for("assignments"))
 
+@app.route("/assignments/add", methods=["POST"])
+@login_required
+def add_assignment():
+    company_id = session["company_id"]
+
+    employee_id = request.form.get("employee_id")
+    site_id = request.form.get("site_id")
+    start_date = safe_date(request.form.get("start_date"))
+    end_date = safe_date(request.form.get("end_date"))
+
+    if is_invalid_date_range(start_date, end_date):
+        flash("End date cannot be before start date.", "danger")
+        return redirect(url_for("assignments"))
+
+    with get_conn() as conn:
+        cur = conn.cursor(dictionary=True)
+
+        cur.execute(
+            """
+            SELECT 1
+            FROM Job_site js
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE js.SiteID = %s AND p.CompanyID = %s
+            """,
+            (site_id, company_id),
+        )
+
+        if not cur.fetchone():
+            flash("Invalid site for this company.", "danger")
+            cur.close()
+            return redirect(url_for("assignments"))
+
+        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
+
+        cur.execute(
+            """
+            INSERT INTO Schedule (ScheduleID, SiteID, EmployeeID, StartDate, EndDate)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (schedule_id, site_id, employee_id, start_date, end_date),
+        )
+
+        conn.commit()
+        cur.close()
+
+    flash("Assignment created.", "success")
+    return redirect(url_for("assignments"))
 
 @app.route("/assignments/<schedule_id>/delete", methods=["POST"])
 @login_required
@@ -836,9 +892,10 @@ def timecards():
     with get_cursor() as cur:
         cur.execute("SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s ORDER BY Name", (company_id,))
         employees_list = cur.fetchall()
+
         cur.execute(
             """
-            SELECT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
+            SELECT DISTINCT s.ScheduleID, js.SiteName, s.StartDate, s.EndDate
             FROM Schedule s
             JOIN Job_site js ON js.SiteID = s.SiteID
             JOIN Project p ON p.ProjectID = js.ProjectID
@@ -848,6 +905,8 @@ def timecards():
             (company_id,),
         )
         schedules = cur.fetchall()
+
+    with get_cursor() as cur:
         cur.execute("CALL GetTimecards(%s, %s, %s)", (company_id, employee_id_param, date_param))
         timecards = cur.fetchall()
 

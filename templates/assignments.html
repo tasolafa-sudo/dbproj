@@ -3,7 +3,11 @@
 {% block content %}
 <div class="page-header-row split">
   <h1 class="page-title">Assignments</h1>
-  <button type="button" class="pixel-btn secondary" data-open-modal="assignment-help">Edit Assignment</button>
+  <button type="button"
+          class="pixel-btn primary small-btn"
+          data-open-modal="add-assignment">
+    + Add Assignment
+  </button>
 </div>
 
 <div class="assignment-stack">
@@ -28,8 +32,80 @@
   {% endfor %}
 </div>
 
-<div class="modal" id="assignment-help"><div class="modal-panel"><button class="modal-close" data-close-modal>&times;</button><p>Choose any assignment card and click edit to update site and schedule dates.</p></div></div>
 {% for assignment in assignments %}
-<div class="modal" id="assignment-{{ assignment.ScheduleID }}"><div class="modal-panel hero-blue"><button class="modal-close" data-close-modal>&times;</button><h2 class="section-title center">Edit Assignment</h2><form method="post" action="{{ url_for('edit_assignment', schedule_id=assignment.ScheduleID) }}" class="form-grid single"><label><span>Job Site</span><select name="site_id">{% for site in sites %}<option value="{{ site.SiteID }}" {% if site.SiteID == assignment.SiteID %}selected{% endif %}>{{ site.SiteName }}</option>{% endfor %}</select></label><label><span>Start Date</span><input type="date" name="start_date" value="{{ assignment.StartDate.strftime('%Y-%m-%d') if assignment.StartDate else '' }}" required></label><label><span>End Date</span><input type="date" name="end_date" value="{{ assignment.EndDate.strftime('%Y-%m-%d') if assignment.EndDate else '' }}" required></label><button type="submit" class="pixel-btn primary wide">Save</button></form></div></div>
+<div class="modal" id="assignment-{{ assignment.ScheduleID }}">
+  <div class="modal-panel hero-blue">
+    <button class="modal-close" data-close-modal>&times;</button>
+    <h2 class="section-title center">Edit Assignment</h2>
+    <form method="post" action="{{ url_for('edit_assignment', schedule_id=assignment.ScheduleID) }}" class="form-grid single">
+      <input type="hidden" name="employee_id" value="{{ assignment.EmployeeID }}">
+      <label>
+        <span>Job Site</span>
+        <select name="site_id">
+          {% for site in sites %}
+          <option value="{{ site.SiteID }}" {% if site.SiteID == assignment.SiteID %}selected{% endif %}>
+            {{ site.SiteName }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Start Date</span>
+        <input type="date" name="start_date" value="{{ assignment.StartDate.strftime('%Y-%m-%d') if assignment.StartDate else '' }}" required>
+      </label>
+      <label>
+        <span>End Date</span>
+        <input type="date" name="end_date" value="{{ assignment.EndDate.strftime('%Y-%m-%d') if assignment.EndDate else '' }}" required>
+      </label>
+      <button type="submit" class="pixel-btn primary wide">Save</button>
+    </form>
+  </div>
+</div>
 {% endfor %}
+<div class="modal" id="add-assignment">
+  <div class="modal-panel hero-blue">
+
+    <button class="modal-close" data-close-modal>&times;</button>
+
+    <h2 class="section-title center">Add Assignment</h2>
+
+    <form method="post" action="{{ url_for('add_assignment') }}" class="form-grid single">
+
+      <label>
+        <span>Employee</span>
+        <select name="employee_id" required>
+          {% for employee in employees %}
+          <option value="{{ employee.EmployeeID }}">
+            {{ employee.Name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>Job Site</span>
+        <select name="site_id" required>
+          {% for site in sites %}
+          <option value="{{ site.SiteID }}">
+            {{ site.SiteName }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>Start Date</span>
+        <input type="date" name="start_date" required>
+      </label>
+
+      <label>
+        <span>End Date</span>
+        <input type="date" name="end_date" required>
+      </label>
+
+      <button type="submit" class="pixel-btn primary wide">Create</button>
+    </form>
+
+  </div>
+</div>
 {% endblock %}

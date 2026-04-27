@@ -29,10 +29,6 @@ _ADMIN_PASSWORD_HASH = generate_password_hash(os.getenv("ADMIN_PASSWORD", "owner
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret-change-me")
-# Secure session cookies: JS can't read them, only sent over HTTPS, and blocked for cross-site requests.
-app.config["SESSION_COOKIE_SECURE"] = True
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # -------------------------- 
 # Rate limiter 

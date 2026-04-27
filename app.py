@@ -1074,6 +1074,19 @@ def delete_timecard(timecard_id):
         if not cur.fetchone():
             flash("Timecard not found.", "danger")
             return redirect(url_for("timecards"))
+        cur.execute(
+            """
+            SELECT pr.PayrollID FROM Payroll pr
+            JOIN Timecard tc ON tc.Date BETWEEN pr.PeriodStart AND pr.PeriodEnd
+            JOIN Employee e ON e.EmployeeID = tc.EmployeeID
+            WHERE tc.TimecardID = %s AND pr.CompanyID = %s
+            LIMIT 1
+            """,
+            (timecard_id, company_id),
+        )
+        if cur.fetchone():
+            flash("Cannot delete a timecard that is part of a processed payroll.", "danger")
+            return redirect(url_for("timecards"))
         cur.execute("CALL delete_timecard(%s)", (timecard_id,))
     flash("Timecard deleted.", "info")
     return redirect(url_for("timecards"))

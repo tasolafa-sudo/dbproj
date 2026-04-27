@@ -859,7 +859,8 @@ def delete_assignment(schedule_id):
         if not cur.fetchone():
             flash("Assignment not found.", "danger")
             return redirect(url_for("assignments"))
-        cur.execute("CALL delete_assignment(%s)", (schedule_id,))
+        cur.execute("DELETE FROM Timecard WHERE ScheduleID=%s", (schedule_id,))
+        cur.execute("DELETE FROM Schedule WHERE ScheduleID=%s", (schedule_id,))
     flash("Assignment deleted.", "info")
     return redirect(url_for("assignments"))
 

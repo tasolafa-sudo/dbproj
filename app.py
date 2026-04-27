@@ -914,11 +914,13 @@ def add_timecard():
         cur = conn.cursor(dictionary=True)
         employee_id = request.form.get("employee_id")
         site_id = request.form.get("schedule_id")
+
         cur.execute("SELECT 1 FROM Employee WHERE EmployeeID=%s AND CompanyID=%s", (employee_id, company_id))
         if not cur.fetchone():
             cur.close()
             flash("Invalid employee for this company.", "danger")
             return redirect(url_for("timecards"))
+
         cur.execute(
             """
             SELECT s.ScheduleID FROM Schedule s
@@ -934,13 +936,14 @@ def add_timecard():
             cur.close()
             flash("No schedule found for this employee at that site.", "danger")
             return redirect(url_for("timecards"))
+
         timecard_id = next_id(cur, "Timecard", "TimecardID", "TC", 4)
         cur.execute("UNLOCK TABLES")
         cur.execute(
             "CALL add_timecard(%s, %s, %s, %s, %s)",
             (
                 timecard_id,
-                request.form.get("schedule_id"),
+                schedule["ScheduleID"],
                 employee_id,
                 safe_date(request.form.get("date")),
                 float(request.form.get("hours")),
@@ -949,7 +952,6 @@ def add_timecard():
         cur.close()
     flash("Timecard added.", "success")
     return redirect(url_for("timecards"))
-
 
 @app.route("/timecards/<timecard_id>/edit", methods=["POST"])
 @login_required

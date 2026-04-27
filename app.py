@@ -849,6 +849,12 @@ def assignments():
             (company_id,),
         )
         sites = cur.fetchall()
+        
+        cur.execute(
+            "SELECT EmployeeID, Name FROM Employee WHERE CompanyID=%s AND Active=TRUE ORDER BY Name",
+            (company_id,),
+        )
+        employees = cur.fetchall()
 
     return render_template("assignments.html", assignments=assignments, sites=sites)
 

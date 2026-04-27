@@ -904,23 +904,33 @@ def add_assignment():
 
     with get_conn() as conn:
         cur = conn.cursor(dictionary=True)
-        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
-        
-    with get_cursor() as cur:
+
         cur.execute(
             """
-            INSERT INTO Schedule (SiteID, EmployeeID, StartDate, EndDate)
-            SELECT %s, %s, %s, %s
-            WHERE EXISTS (
-                SELECT 1
-                FROM Job_site js
-                JOIN Project p ON p.ProjectID = js.ProjectID
-                WHERE js.SiteID = %s
-                  AND p.CompanyID = %s
-            )
+            SELECT 1
+            FROM Job_site js
+            JOIN Project p ON p.ProjectID = js.ProjectID
+            WHERE js.SiteID = %s AND p.CompanyID = %s
             """,
-            (site_id, employee_id, start_date, end_date, site_id, company_id),
+            (site_id, company_id),
         )
+
+        if not cur.fetchone():
+            flash("Invalid site for this company.", "danger")
+            cur.close()
+            return redirect(url_for("assignments"))
+
+        schedule_id = next_id(cur, "Schedule", "ScheduleID", "SC", 4)
+
+        cur.execute(
+            """
+            INSERT INTO Schedule (ScheduleID, SiteID, EmployeeID, StartDate, EndDate)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (schedule_id, site_id, employee_id, start_date, end_date),
+        )
+
+        cur.close()
 
     flash("Assignment created.", "success")
     return redirect(url_for("assignments"))
